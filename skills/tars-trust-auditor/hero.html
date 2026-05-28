@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TARS — Trust Auditor for Responsible Systems</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0b1120;--bg2:#111827;--bg3:#1a2332;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--accent:#29B5E8;--green:#10b981;--purple:#a78bfa;--orange:#f59e0b;--red:#ef4444;--card-border:rgba(255,255,255,0.06);--radius:12px}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden}
+
+.hero{min-height:90vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4rem 2rem;position:relative}
+.hero::before{content:'';position:absolute;top:-200px;left:50%;transform:translateX(-50%);width:800px;height:800px;background:radial-gradient(ellipse,rgba(245,158,11,0.08) 0%,transparent 70%);pointer-events:none}
+.badge{display:inline-flex;align-items:center;gap:.5rem;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.25);border-radius:100px;padding:.4rem 1.2rem;font-size:.78rem;font-weight:600;color:var(--orange);margin-bottom:1.5rem;letter-spacing:.03em;text-transform:uppercase}
+h1{font-size:clamp(2.2rem,5vw,3.5rem);font-weight:800;line-height:1.1;max-width:900px;background:linear-gradient(135deg,#fff 30%,var(--orange));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.subtitle{font-size:clamp(1rem,2vw,1.2rem);color:var(--text2);max-width:700px;margin:1.2rem auto 2rem}
+.quote{font-style:italic;color:var(--orange);font-size:1.1rem;margin-bottom:2rem;font-weight:500}
+.tags{display:flex;flex-wrap:wrap;justify-content:center;gap:.5rem;margin-bottom:2rem}
+.tags span{background:var(--bg3);border:1px solid var(--card-border);border-radius:8px;padding:.3rem .8rem;font-size:.8rem;font-weight:500;color:var(--text2)}
+
+section{padding:4rem 2rem}
+.inner{max-width:1000px;margin:0 auto}
+.label{font-size:.75rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--orange);margin-bottom:.75rem}
+h2{font-size:clamp(1.5rem,3vw,2rem);font-weight:700;margin-bottom:.5rem}
+.desc{color:var(--text2);max-width:640px;margin-bottom:2rem;font-size:.95rem}
+
+.card{background:var(--bg2);border:1px solid var(--card-border);border-radius:var(--radius);padding:1.5rem;margin-bottom:1rem}
+.card h3{font-size:.95rem;font-weight:600;margin-bottom:.4rem}
+.card p{font-size:.85rem;color:var(--text2);line-height:1.55}
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem}
+@media(max-width:768px){.grid2,.grid3{grid-template-columns:1fr}}
+
+.icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;margin-bottom:.75rem;font-size:1.1rem}
+.icon-orange{background:rgba(245,158,11,0.12);color:var(--orange)}
+.icon-green{background:rgba(16,185,129,0.12);color:var(--green)}
+.icon-blue{background:rgba(41,181,232,0.12);color:var(--accent)}
+.icon-purple{background:rgba(167,139,250,0.12);color:var(--purple)}
+.icon-red{background:rgba(239,68,68,0.12);color:var(--red)}
+
+table{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:1.5rem}
+thead{background:var(--bg3)}
+th{padding:.7rem 1rem;text-align:left;font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);border-bottom:1px solid var(--card-border)}
+td{padding:.65rem 1rem;border-bottom:1px solid var(--card-border);color:var(--text)}
+tbody tr:hover{background:rgba(245,158,11,0.04)}
+.mono{font-family:'JetBrains Mono',monospace;font-size:.8rem}
+
+.equation{text-align:center;padding:2rem;background:var(--bg3);border-radius:var(--radius);border:1px solid var(--card-border);margin-bottom:2rem}
+.equation .formula{font-family:'JetBrains Mono',monospace;font-size:1.5rem;color:var(--orange);font-weight:700;margin-bottom:.75rem}
+.equation .explain{font-size:.85rem;color:var(--text2)}
+
+.vote-box{background:var(--bg3);border:2px solid var(--orange);border-radius:var(--radius);padding:1.5rem;font-family:'JetBrains Mono',monospace;font-size:.82rem;line-height:1.8;margin-bottom:1.5rem}
+.vote-box .header{color:var(--orange);font-weight:700;font-size:.9rem;margin-bottom:.5rem}
+
+.note{padding:1rem 1.25rem;background:var(--bg3);border-left:3px solid var(--orange);border-radius:0 8px 8px 0;font-size:.85rem;color:var(--text2);margin-bottom:1.5rem}
+
+.alt{background:var(--bg2)}
+
+.agent-row{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;margin-bottom:2rem}
+.agent-card{background:var(--bg2);border:1px solid var(--card-border);border-radius:var(--radius);padding:1.25rem;text-align:center;min-width:180px;flex:1;max-width:250px}
+.agent-card .name{font-weight:700;font-size:1rem;margin-bottom:.25rem}
+.agent-card .role{font-size:.78rem;color:var(--text2);margin-bottom:.5rem}
+.agent-card .model{font-family:'JetBrains Mono',monospace;font-size:.75rem;padding:.2rem .5rem;border-radius:4px;display:inline-block}
+.agent-coco .name{color:var(--accent)}
+.agent-coco .model{background:rgba(41,181,232,0.12);color:var(--accent)}
+.agent-rocky .name{color:var(--green)}
+.agent-rocky .model{background:rgba(16,185,129,0.12);color:var(--green)}
+.agent-tars .name{color:var(--orange)}
+.agent-tars .model{background:rgba(245,158,11,0.12);color:var(--orange)}
+.agent-human .name{color:var(--purple)}
+.agent-human .model{background:rgba(167,139,250,0.12);color:var(--purple)}
+
+footer{border-top:1px solid var(--card-border);padding:2.5rem 2rem;text-align:center}
+footer p{font-size:.8rem;color:var(--text3)}
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <div class="badge">Trust Auditor</div>
+  <h1>TARS</h1>
+  <p class="quote">"Honesty: 95%. Humor: 75%."</p>
+  <p class="subtitle">Independent adversarial auditor that quantifies trust in AI-generated artifacts. Different model. Different objective. Reports to the human, not the builder.</p>
+  <div class="tags">
+    <span>Love Equation</span>
+    <span>SAFE&sup2;</span>
+    <span>Three-Vote Pattern</span>
+    <span>CORTEX.COMPLETE()</span>
+    <span>Multi-Model Audit</span>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="inner">
+    <div class="label">Foundation</div>
+    <h2>The Love Equation</h2>
+    <div class="equation">
+      <div class="formula">dE/dt = &beta;(C - D)E</div>
+      <div class="explain">
+        <strong>E</strong> = trust (cooperative binding) &nbsp;&middot;&nbsp;
+        <strong>C</strong> = cooperative signals (truth, verification) &nbsp;&middot;&nbsp;
+        <strong>D</strong> = defection signals (hallucination, leakage) &nbsp;&middot;&nbsp;
+        <strong>&beta;</strong> = selection pressure (audit enforcement)
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <div class="icon icon-green">C</div>
+        <h3>Cooperative Signals</h3>
+        <p>SQL compiles. Metrics match queries. Calibration matches registry. Model Card is complete. Features don't leak outcomes. Claims match code.</p>
+      </div>
+      <div class="card">
+        <div class="icon icon-red">D</div>
+        <h3>Defection Signals</h3>
+        <p>Hallucinated tables. Stale record counts. Missing synthetic data caveats. AUROC too perfect. Vapor features in README. Unregistered model versions.</p>
+      </div>
+    </div>
+    <div class="note">When C &gt; D, trust compounds exponentially. When D &gt; C, trust collapses. TARS measures both and computes the ratio.</div>
+  </div>
+</section>
+
+<section>
+  <div class="inner">
+    <div class="label">Architecture</div>
+    <h2>The Agent Ecosystem</h2>
+    <div class="agent-row">
+      <div class="agent-card agent-coco">
+        <div class="name">CoCo</div>
+        <div class="role">Builder</div>
+        <div class="model">Claude</div>
+      </div>
+      <div class="agent-card agent-rocky">
+        <div class="name">Rocky</div>
+        <div class="role">Engineer</div>
+        <div class="model">Task-specific</div>
+      </div>
+      <div class="agent-card agent-tars">
+        <div class="name">TARS</div>
+        <div class="role">Auditor</div>
+        <div class="model">Llama (CORTEX)</div>
+      </div>
+      <div class="agent-card agent-human">
+        <div class="name">Human</div>
+        <div class="role">Final Authority</div>
+        <div class="model">The decider</div>
+      </div>
+    </div>
+    <div class="note">TARS uses a structurally independent LLM (Llama via CORTEX.COMPLETE). Different training data = different biases = uncorrelated errors. If both CoCo and TARS agree, the signal is strong.</div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="inner">
+    <div class="label">Three-Vote Pattern</div>
+    <h2>Builder &middot; Auditor &middot; Human</h2>
+    <div class="vote-box">
+      <div class="header">TARS TRUST AUDIT &mdash; FIMR Model v2.1</div>
+      Trust Score: 0.91 (GOOD)<br>
+      &beta; = 14 checks applied<br><br>
+      Builder (CoCo): &ensp;<span style="color:var(--green)">&check;</span> SHIP &mdash; "All checks pass, metrics verified"<br><br>
+      Auditor (TARS): &ensp;<span style="color:var(--green)">&check;</span> SHIP WITH CAVEATS<br>
+      &ensp;&ensp;C signals: 12 &ensp;|&ensp; D signals: 2<br>
+      &ensp;&ensp;<span style="color:var(--red)">[D]</span> Notebook record count stale (684K &rarr; 642K)<br>
+      &ensp;&ensp;<span style="color:var(--red)">[D]</span> Model Card missing calibration date<br>
+      &ensp;&ensp;<span style="color:var(--green)">[C]</span> SQL compilation: 26/26 passed<br>
+      &ensp;&ensp;<span style="color:var(--green)">[C]</span> Metric verification: all within tolerance<br>
+      &ensp;&ensp;<span style="color:var(--green)">[C]</span> Registry sync: 9/9 versions current<br><br>
+      Human (Todd): &ensp;<span style="color:var(--purple)">?</span> YOUR VOTE
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="inner">
+    <div class="label">Audit Tiers</div>
+    <h2>Right Model for the Right Check</h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Model</th><th>Cost</th><th>Checks</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Tier 1</strong></td><td class="mono">None (deterministic)</td><td>Free</td><td>SQL compile, metric verification, record counts, object existence, registry sync, SDLC</td></tr>
+        <tr><td><strong>Tier 2</strong></td><td class="mono">llama3.1-70b</td><td>~0.001 cr/call</td><td>Doc grounding, Model Card completeness, calibration honesty, notebook freshness, code-claim consistency</td></tr>
+        <tr><td><strong>Tier 3</strong></td><td class="mono">llama3.1-405b</td><td>~0.01 cr/call</td><td>Data leakage detection, architecture soundness, bias audit</td></tr>
+      </tbody>
+    </table>
+    <div class="note">Principle: use the cheapest model that can reliably detect the failure mode. SQL compilation doesn't need AI. Data leakage detection does.</div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="inner">
+    <div class="label">Trust Score</div>
+    <h2>Quantified Trust</h2>
+    <div class="equation">
+      <div class="formula">T = &Sigma;(C &times; w) / &Sigma;((C + D) &times; w)</div>
+      <div class="explain">Tier 1 weight = 2.0 (ground truth) &nbsp;&middot;&nbsp; Tier 2 = 1.0 &nbsp;&middot;&nbsp; Tier 3 = 1.5</div>
+    </div>
+    <table>
+      <thead><tr><th>Score</th><th>Grade</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td style="color:var(--green)">&ge; 0.95</td><td><strong>EXCELLENT</strong></td><td>Ship with confidence</td></tr>
+        <tr><td style="color:var(--accent)">0.85 - 0.94</td><td><strong>GOOD</strong></td><td>Ship with noted caveats</td></tr>
+        <tr><td style="color:var(--orange)">0.70 - 0.84</td><td><strong>FAIR</strong></td><td>Address D signals before shipping</td></tr>
+        <tr><td style="color:var(--red)">&lt; 0.70</td><td><strong>FAIL</strong></td><td>Do not ship</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="inner">
+    <div class="label">Honesty Setting</div>
+    <h2>Configurable, Like the Original</h2>
+    <div class="grid3">
+      <div class="card">
+        <div class="icon icon-green">80</div>
+        <h3>Lenient (80%)</h3>
+        <p>Tier 1 deterministic checks only. Quick iteration during development. Skips LLM audit.</p>
+      </div>
+      <div class="card" style="border-color:var(--orange)">
+        <div class="icon icon-orange">95</div>
+        <h3>Standard (95%) &mdash; Default</h3>
+        <p>All tiers. Minor tolerance on rounding, dates within 7 days. Production-ready gate.</p>
+      </div>
+      <div class="card">
+        <div class="icon icon-red">100</div>
+        <h3>Strict (100%)</h3>
+        <p>Zero tolerance. Every deviation is a D signal. For regulatory submission or publication.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="inner">
+    <div class="label">Proven</div>
+    <h2>Built from Real Defections We Caught</h2>
+    <table>
+      <thead><tr><th>Defection</th><th>How TARS Would Catch It</th><th>Tier</th></tr></thead>
+      <tbody>
+        <tr><td>Graph AUROC 0.999 (data leakage)</td><td>Tier 3: Feature-outcome causal analysis flags COUNTY_IMR</td><td>3</td></tr>
+        <tr><td>Notebook record counts stale after calibration</td><td>Tier 1: COUNT(*) doesn't match documented 817 &rarr; actual 457</td><td>1</td></tr>
+        <tr><td>Hispanic IMR 3.4 (should be 9.2)</td><td>Tier 1: Calibration delta check against REF_IMR_BY_RACE</td><td>1</td></tr>
+        <tr><td>Congenital anomalies 1.5% (should be 19%)</td><td>Tier 1: Cause distribution check against REF_CAUSE_OF_DEATH</td><td>1</td></tr>
+        <tr><td>MCP app using expired PAT silently</td><td>Tier 2: Architecture review flags missing auth validation on startup</td><td>2</td></tr>
+        <tr><td>SPCS inference crash on graph checkpoints</td><td>Tier 1: Model type detection — graph keys in base model state_dict</td><td>1</td></tr>
+      </tbody>
+    </table>
+    <div class="note">Every defection we caught manually in 37 sessions becomes a TARS check that catches it automatically next time. That's &beta; increasing over time &mdash; the selection pressure compounds.</div>
+  </div>
+</section>
+
+<section>
+  <div class="inner">
+    <div class="label">Brian Roemmele</div>
+    <h2>SAFE&sup2; &mdash; The Philosophy Behind the Engineering</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>L = S &middot; A &middot; F &middot; E&sup2;</h3>
+        <p><strong>S</strong>tewardship &middot; <strong>A</strong>lignment &middot; <strong>F</strong>airness &middot; <strong>E</strong>mpathy &middot; <strong>E</strong>volution</p>
+        <p style="margin-top:.5rem;font-size:.8rem;color:var(--text3)">Multiplicative: if any factor is zero, love is zero. An aligned but empathy-less system fails.</p>
+      </div>
+      <div class="card">
+        <h3>TARS Implements SAFE&sup2;</h3>
+        <p><strong>S</strong>: Auditor serves the human, not the builder<br>
+        <strong>A</strong>: Continuous alignment via Trust Score tracking<br>
+        <strong>F</strong>: Same checks applied to every artifact<br>
+        <strong>E</strong>: Configurable honesty — context-aware strictness<br>
+        <strong>E&sup2;</strong>: Every caught defection becomes a new check</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>TARS — Trust Auditor for Responsible Systems</p>
+  <p style="margin-top:.5rem">A Cortex Code Skill &middot; Inspired by Interstellar &middot; Grounded in the Love Equation</p>
+</footer>
+
+</body>
+</html>

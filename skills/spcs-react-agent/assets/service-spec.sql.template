@@ -1,0 +1,57 @@
+-- Create the SPCS service (first time only)
+CREATE SERVICE IF NOT EXISTS {{DATABASE}}.{{SCHEMA}}.{{SERVICE_NAME}}
+  IN COMPUTE POOL {{COMPUTE_POOL}}
+  FROM SPECIFICATION $$
+  spec:
+    containers:
+    - name: app
+      image: {{REGISTRY_PATH}}/{{APP_NAME}}:latest
+      resources:
+        requests:
+          memory: 1G
+          cpu: 0.5
+        limits:
+          memory: 2G
+          cpu: 1
+    endpoints:
+    - name: app
+      port: 8080
+      public: true
+    capabilities:
+      securityContext:
+        executeAsCaller: true
+  $$
+  MIN_INSTANCES = 1
+  MAX_INSTANCES = 1;
+
+-- Update existing service (preserves endpoint URL)
+ALTER SERVICE {{DATABASE}}.{{SCHEMA}}.{{SERVICE_NAME}}
+FROM SPECIFICATION $$
+spec:
+  containers:
+  - name: app
+    image: {{REGISTRY_PATH}}/{{APP_NAME}}:latest
+    resources:
+      requests:
+        memory: 1G
+        cpu: 0.5
+      limits:
+        memory: 2G
+        cpu: 1
+  endpoints:
+  - name: app
+    port: 8080
+    public: true
+  capabilities:
+    securityContext:
+      executeAsCaller: true
+$$;
+
+-- Check service status
+SHOW SERVICES LIKE '{{SERVICE_NAME}}' IN SCHEMA {{DATABASE}}.{{SCHEMA}};
+
+-- View logs
+SELECT SYSTEM$GET_SERVICE_LOGS('{{DATABASE}}.{{SCHEMA}}.{{SERVICE_NAME}}', 0, 'app', 100);
+
+-- Get public endpoint URL
+SHOW ENDPOINTS IN SERVICE {{DATABASE}}.{{SCHEMA}}.{{SERVICE_NAME}};

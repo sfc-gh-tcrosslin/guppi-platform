@@ -1,0 +1,101 @@
+import os
+import json
+import logging
+from flask import Flask, request, jsonify
+import snowflake.connector
+
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+SF_HOST = os.getenv('SNOWFLAKE_HOST', '')
+SF_ACCOUNT = os.getenv('SNOWFLAKE_ACCOUNT', '')
+AGENT_DB = '{{DATABASE}}'
+AGENT_SCHEMA = '{{SCHEMA}}'
+AGENT_NAME = '{{AGENT_NAME}}'
+AGENT_FQN = f'{AGENT_DB}.{AGENT_SCHEMA}.{AGENT_NAME}'
+WAREHOUSE = '{{WAREHOUSE}}'
+
+def get_token():
+    with open('/snowflake/session/token', 'r') as f:
+        return f.read().strip()
+
+def get_connection():
+    params = {
+        'token': get_token(),
+        'authenticator': 'oauth',
+        'database': AGENT_DB,
+        'schema': AGENT_SCHEMA,
+        'warehouse': WAREHOUSE,
+    }
+    if SF_HOST:
+        params['host'] = SF_HOST
+    if SF_ACCOUNT:
+        params['account'] = SF_ACCOUNT
+    return snowflake.connector.connect(**params)
+
+@app.route('/api/v2/statements', methods=['POST'])
+def execute_sql():
+    try:
+        body = request.json
+        sql = body.get('statement', '')
+        if not sql:
+            return jsonify({'error': 'No statement provided'}), 400
+
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(sql)
+            cols = [desc[0] for desc in cur.description] if cur.description else []
+            rows = cur.fetchall()
+            data = [[str(v) if v is not None else None for v in row] for row in rows]
+            return jsonify({
+                'resultSetMetaData': {'rowType': [{'name': c} for c in cols]},
+                'data': data,
+                'code': '090001',
+                'message': 'Statement executed successfully.',
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.error(f"SQL error: {e}")
+        return jsonify({'code': '000001', 'message': str(e)}), 500
+
+@app.route('/api/v2/cortex/agent:run', methods=['POST'])
+def agent_run():
+    try:
+        body = request.json
+        messages = body.get('messages', [])
+        request_body = {'messages': messages}
+        request_json = json.dumps(request_body)
+
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(%s, %s) AS response",
+                (AGENT_FQN, request_json)
+            )
+            row = cur.fetchone()
+            raw = row[0] if row else '{}'
+            agent_resp = json.loads(raw) if isinstance(raw, str) else raw
+            return jsonify(agent_resp)
+        finally:
+            conn.close()
+    except Exception as e:
+        logging.error(f"Agent error: {e}", exc_info=True)
+        return jsonify({'message': str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT CURRENT_USER(), CURRENT_ROLE()')
+        row = cur.fetchone()
+        conn.close()
+        return jsonify({'status': 'ok', 'user': row[0], 'role': row[1]})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8085)

@@ -1,0 +1,41 @@
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8888
+ * Running on http://192.168.1.142:8888
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [22/May/2026 13:58:45] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [22/May/2026 13:59:28] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [25/May/2026 17:26:26] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [25/May/2026 17:26:39] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [27/May/2026 23:34:40] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [27/May/2026 23:41:31] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 00:37:49] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 11:27:34] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 14:30:42] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 14:44:06] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 14:51:41] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 14:56:09] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 16:11:04] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 16:11:36] "GET /api/data HTTP/1.1" 200 -
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8888
+ * Running on http://10.21.6.17:8888
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [28/May/2026 16:12:48] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 16:13:12] "GET / HTTP/1.1" 200 -
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8888
+ * Running on http://10.21.6.17:8888
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [28/May/2026 16:14:08] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 16:14:16] "GET / HTTP/1.1" 200 -
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8888
+ * Running on http://10.21.6.17:8888
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [28/May/2026 16:15:29] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 16:18:52] "GET /api/data HTTP/1.1" 200 -
+127.0.0.1 - - [28/May/2026 16:19:05] "GET / HTTP/1.1" 200 -

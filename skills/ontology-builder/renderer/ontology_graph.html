@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{PROJECT_NAME}} — Ontology & Knowledge Graph</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+:root{--bg:#0f1117;--card:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#8888a0;--blue:#29B5E8;--green:#14B8A6;--amber:#F59E0B;--red:#EF4444;--purple:#A78BFA;--cyan:#06B6D4}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+.header{position:fixed;top:0;left:0;right:0;height:56px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 24px;z-index:100}
+.header h1{font-size:20px;font-weight:700;color:var(--blue)}
+.header span{font-size:14px;color:var(--muted);margin-left:12px}
+.controls{position:fixed;top:68px;left:16px;z-index:90;display:flex;flex-direction:column;gap:8px}
+.layer-btn{padding:10px 18px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;letter-spacing:.05em;text-transform:uppercase;transition:all .2s;text-align:left}
+.layer-btn:hover{border-color:var(--muted)}
+.layer-btn.active{border-color:var(--blue);color:var(--text)}
+.layer-btn .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px}
+.legend{position:fixed;bottom:16px;left:16px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:18px;z-index:90;font-size:13px;max-width:280px}
+.legend h3{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+.legend-item{display:flex;align-items:center;gap:8px;margin-bottom:7px;color:var(--muted)}
+.legend-item .swatch{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.detail-panel{position:fixed;top:68px;right:16px;width:300px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:20px;z-index:90;display:none;max-height:calc(100vh - 100px);overflow-y:auto}
+.detail-panel h3{font-size:13px;color:var(--blue);margin-bottom:4px}
+.detail-panel .type{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px}
+.detail-panel .desc{font-size:12px;color:var(--text);line-height:1.6;margin-bottom:12px}
+.detail-panel .metric{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:8px}
+.detail-panel .metric-name{font-size:11px;font-weight:600;color:var(--amber)}
+.detail-panel .metric-val{font-size:10px;color:var(--muted);margin-top:2px}
+.detail-panel .connections{margin-top:12px}
+.detail-panel .conn{font-size:11px;color:var(--muted);padding:3px 0}
+.detail-panel .conn span{color:var(--green)}
+svg{position:fixed;top:56px;left:0;right:0;bottom:0}
+.node-label{font-size:13px;fill:var(--muted);pointer-events:none;text-anchor:middle}
+.node-circle{cursor:pointer;stroke-width:2;transition:r .2s}
+.node-circle:hover{r:14}
+.tooltip{position:fixed;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-size:11px;color:var(--text);pointer-events:none;z-index:200;display:none}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>{{PROJECT_NAME}} — Ontology & Knowledge Graph</h1>
+<span>Interactive — click nodes to explore, toggle layers to filter</span>
+</div>
+<div class="controls" id="controls"></div>
+<div class="legend" id="legend"></div>
+<div class="detail-panel" id="detail"></div>
+<div class="tooltip" id="tooltip"></div>
+<svg id="graph"></svg>
+<script>
+// ============================================================
+// DATA CONTRACT — Replace these two arrays with your project data
+// ============================================================
+// Each node: {id, label, layer, color, r, desc, metrics:[{n,v}]}
+// Each link: {source, target, label, layer, color}
+const nodes = {{NODES}};
+const links = {{LINKS}};
+
+// Layer definitions: {id, label, color}
+const layers = {{LAYERS}};
+
+// ============================================================
+// RENDERER ENGINE — Do not modify below this line
+// ============================================================
+const width = window.innerWidth;
+const height = window.innerHeight - 56;
+let activeLayer = "all";
+let layoutLocked = false;
+
+// Build controls
+const ctrlDiv = document.getElementById('controls');
+ctrlDiv.innerHTML = `<button class="layer-btn active" data-layer="all"><span class="dot" style="background:var(--text)"></span>All Layers</button>`
+  + layers.map(l => `<button class="layer-btn" data-layer="${l.id}"><span class="dot" style="background:${l.color}"></span>${l.label}</button>`).join('')
+  + `<button class="layer-btn" id="lock-btn" style="margin-top:12px;border-color:var(--amber);color:var(--amber)">&#128274; Lock Layout</button>`;
+
+// Build legend
+const legDiv = document.getElementById('legend');
+legDiv.innerHTML = `<h3>Entity Types</h3>` + layers.map(l => `<div class="legend-item"><div class="swatch" style="background:${l.color}"></div>${l.label}</div>`).join('')
+  + `<h3 style="margin-top:12px">Interactions</h3><div class="legend-item" style="font-size:11px;color:var(--muted)">Click node for details. Drag to rearrange. Scroll to zoom. Lock to freeze.</div>`;
+
+const svg = d3.select("#graph").attr("width", width).attr("height", height);
+const g = svg.append("g");
+const zoom = d3.zoom().scaleExtent([0.3, 4]).on("zoom", e => g.attr("transform", e.transform));
+svg.call(zoom);
+
+const linkG = g.append("g");
+const nodeG = g.append("g");
+const labelG = g.append("g");
+
+const simulation = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(90).strength(0.4))
+  .force("charge", d3.forceManyBody().strength(-400))
+  .force("center", d3.forceCenter(width / 2, height / 2))
+  .force("collision", d3.forceCollide().radius(d => d.r + 10))
+  .force("x", d3.forceX(width / 2).strength(0.05))
+  .force("y", d3.forceY(height / 2).strength(0.05));
+
+const linkEls = linkG.selectAll("line").data(links).join("line")
+  .attr("stroke", d => d.color).attr("stroke-opacity", 0.5).attr("stroke-width", 3);
+
+const nodeEls = nodeG.selectAll("circle").data(nodes).join("circle")
+  .attr("class", "node-circle").attr("r", d => d.r)
+  .attr("fill", d => d.color + "20").attr("stroke", d => d.color)
+  .call(d3.drag().on("start", dragStart).on("drag", dragging).on("end", dragEnd));
+
+const labelEls = labelG.selectAll("text").data(nodes).join("text")
+  .attr("class", "node-label").text(d => d.label).attr("dy", d => d.r + 14);
+
+// Click node → highlight + detail panel
+nodeEls.on("click", (e, d) => {
+  const connectedIds = new Set([d.id]);
+  links.forEach(l => {
+    if ((l.source.id || l.source) === d.id) connectedIds.add(l.target.id || l.target);
+    if ((l.target.id || l.target) === d.id) connectedIds.add(l.source.id || l.source);
+  });
+  nodeEls.transition().duration(300)
+    .attr("opacity", n => connectedIds.has(n.id) ? 1 : 0.1)
+    .attr("stroke-width", n => n.id === d.id ? 4 : connectedIds.has(n.id) ? 3 : 2)
+    .attr("r", n => n.id === d.id ? n.r + 4 : n.r);
+  labelEls.transition().duration(300)
+    .attr("opacity", n => connectedIds.has(n.id) ? 1 : 0.1)
+    .attr("font-weight", n => connectedIds.has(n.id) ? "700" : "400");
+  linkEls.transition().duration(300)
+    .attr("opacity", l => connectedIds.has(l.source.id || l.source) && connectedIds.has(l.target.id || l.target) ? 0.8 : 0.03)
+    .attr("stroke-width", l => connectedIds.has(l.source.id || l.source) && connectedIds.has(l.target.id || l.target) ? 4 : 0.5);
+  const panel = document.getElementById("detail");
+  let html = `<h3>${d.label}</h3><div class="type">${d.layer}</div><div class="desc">${d.desc}</div>`;
+  if (d.metrics) d.metrics.forEach(m => { html += `<div class="metric"><div class="metric-name">${m.n}</div><div class="metric-val">${m.v}</div></div>` });
+  const conns = links.filter(l => (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id);
+  if (conns.length) {
+    html += `<div class="connections"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">Connections (${conns.length})</div>`;
+    conns.forEach(c => {
+      const other = (c.source.id || c.source) === d.id ? (c.target.label || c.target) : (c.source.label || c.source);
+      html += `<div class="conn"><span>${c.label || 'related'}</span> \u2192 ${other}</div>`;
+    });
+    html += `</div>`;
+  }
+  panel.innerHTML = html; panel.style.display = "block";
+  e.stopPropagation();
+}).on("mouseover", (e, d) => {
+  const tip = document.getElementById("tooltip");
+  tip.style.display = "block"; tip.style.left = (e.pageX + 12) + "px"; tip.style.top = (e.pageY - 20) + "px";
+  tip.textContent = `${d.label} (${d.layer})`;
+}).on("mouseout", () => { document.getElementById("tooltip").style.display = "none" });
+
+// Click background → reset
+svg.on("click", () => {
+  nodeEls.transition().duration(300).attr("opacity", 1).attr("stroke-width", 2).attr("r", d => d.r);
+  labelEls.transition().duration(300).attr("opacity", 1).attr("font-weight", "400");
+  linkEls.transition().duration(300).attr("opacity", .5).attr("stroke-width", 3);
+  document.getElementById("detail").style.display = "none";
+});
+
+// Tick
+simulation.on("tick", () => {
+  linkEls.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+  nodeEls.attr("cx", d => d.x).attr("cy", d => d.y);
+  labelEls.attr("x", d => d.x).attr("y", d => d.y);
+});
+
+// Drag handlers (lock-aware)
+function dragStart(e, d) { if (!layoutLocked) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y }
+function dragging(e, d) {
+  d.fx = e.x; d.fy = e.y;
+  if (layoutLocked) {
+    d.x = e.x; d.y = e.y; simulation.tick();
+    linkEls.attr("x1", l => l.source.x).attr("y1", l => l.source.y).attr("x2", l => l.target.x).attr("y2", l => l.target.y);
+    nodeEls.attr("cx", n => n.x).attr("cy", n => n.y);
+    labelEls.attr("x", n => n.x).attr("y", n => n.y);
+  }
+}
+function dragEnd(e, d) { if (!layoutLocked) { if (!e.active) simulation.alphaTarget(0) } }
+
+// Lock button
+document.getElementById("lock-btn").addEventListener("click", () => {
+  layoutLocked = !layoutLocked;
+  const btn = document.getElementById("lock-btn");
+  if (layoutLocked) {
+    simulation.stop();
+    nodes.forEach(d => { d.fx = d.x; d.fy = d.y });
+    btn.innerHTML = "&#128275; Unlock Layout";
+    btn.style.borderColor = "var(--green)"; btn.style.color = "var(--green)";
+  } else {
+    nodes.forEach(d => { d.fx = null; d.fy = null });
+    simulation.alphaTarget(0.3).restart();
+    setTimeout(() => simulation.alphaTarget(0), 1000);
+    btn.innerHTML = "&#128274; Lock Layout";
+    btn.style.borderColor = "var(--amber)"; btn.style.color = "var(--amber)";
+  }
+});
+
+// Layer filter
+document.querySelectorAll(".layer-btn").forEach(btn => {
+  if (btn.id === 'lock-btn') return;
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".layer-btn:not(#lock-btn)").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeLayer = btn.dataset.layer;
+    const visible = d => activeLayer === "all" || d.layer === activeLayer;
+    const linkVisible = d => activeLayer === "all" || d.layer === activeLayer;
+    nodeEls.transition().duration(300).attr("opacity", d => visible(d) ? 1 : 0.08);
+    labelEls.transition().duration(300).attr("opacity", d => visible(d) ? 1 : 0.08);
+    linkEls.transition().duration(300).attr("opacity", d => linkVisible(d) ? 0.6 : 0.03).attr("stroke-width", d => linkVisible(d) ? 3.5 : 0.5);
+  });
+});
+
+// Initial zoom fit
+svg.call(zoom.transform, d3.zoomIdentity.translate(width * 0.1, height * 0.05).scale(0.9));
+</script>
+</body>
+</html>

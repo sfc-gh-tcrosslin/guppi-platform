@@ -1,0 +1,144 @@
+import type { SqlRow } from '../types';
+
+let authToken: string | null = null;
+
+export function isSpcs(): boolean {
+  return window.location.hostname.endsWith('.snowflakecomputing.app');
+}
+
+export function setAuthToken(token: string) {
+  authToken = token;
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+async function snowflakeRequest(path: string, body: object): Promise<Response> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (isSpcs()) {
+    // On SPCS: nginx proxies to Flask backend — no client-side auth needed
+  } else if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+    headers['X-Snowflake-Authorization-Token-Type'] = 'PROGRAMMATIC_ACCESS_TOKEN';
+  } else {
+    throw new Error('Not authenticated');
+  }
+
+  const resp = await fetch(`/api/v2${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Snowflake API error (${resp.status}): ${text}`);
+  }
+  return resp;
+}
+
+export async function executeSql(sql: string): Promise<SqlRow[]> {
+  const resp = await snowflakeRequest('/statements', {
+    statement: sql,
+    timeout: 120,
+    database: '{{DATABASE}}',
+    schema: '{{SCHEMA}}',
+    warehouse: '{{WAREHOUSE}}',
+  });
+  const json = await resp.json();
+
+  if (json.code && json.code !== '090001' && !json.data) {
+    if (json.message?.includes('Authentication') || json.message?.includes('token')) {
+      throw new Error(json.message || 'Authentication failed');
+    }
+    if (json.message === 'Statement executed successfully.' || json.code === '000000') {
+      return [];
+    }
+  }
+
+  const cols = json.resultSetMetaData?.rowType?.map((c: { name: string }) => c.name) || [];
+  const rows: SqlRow[] = (json.data || []).map((row: string[]) => {
+    const obj: SqlRow = {};
+    cols.forEach((col: string, i: number) => {
+      const val = row[i];
+      obj[col] = val === null ? null : isNaN(Number(val)) ? val : Number(val);
+    });
+    return obj;
+  });
+  return rows;
+}
+
+export async function queryAgent(question: string, threadId?: string): Promise<{
+  text: string;
+  sql?: string;
+  data?: SqlRow[];
+  citations?: { id: string; title: string; url: string; snippet: string }[];
+  threadId?: string;
+}> {
+  const messages = [{ role: 'user', content: [{ type: 'text', text: question }] }];
+  const body: Record<string, unknown> = { messages, stream: false };
+  if (threadId) body.thread_id = threadId;
+
+  const resp = await snowflakeRequest('/cortex/agent:run', body);
+  const json = await resp.json();
+
+  let text = '';
+  let sql: string | undefined;
+  let data: SqlRow[] | undefined;
+  const citations: { id: string; title: string; url: string; snippet: string }[] = [];
+
+  // DATA_AGENT_RUN returns {content: [...]} at top level
+  const content = json.content || json.message?.content || [];
+  for (const block of content) {
+    if (block.type === 'text') {
+      text += block.text || '';
+    } else if (block.type === 'tool_result') {
+      const items = block.tool_result?.content || block.content || [];
+      for (const item of items) {
+        if (item.type === 'json' && item.json) {
+          const jsonData = typeof item.json === 'string' ? JSON.parse(item.json) : item.json;
+          if (jsonData?.sql) sql = jsonData.sql;
+          if (jsonData?.result_set?.data && jsonData?.result_set?.resultSetMetaData?.rowType) {
+            const cols = jsonData.result_set.resultSetMetaData.rowType.map((c: { name: string }) => c.name);
+            data = jsonData.result_set.data.map((row: string[]) => {
+              const obj: SqlRow = {};
+              cols.forEach((col: string, i: number) => {
+                const val = row[i];
+                obj[col] = val === null ? null : isNaN(Number(val)) ? val : Number(val);
+              });
+              return obj;
+            });
+          }
+          if (jsonData?.searchResults) {
+            for (const sr of jsonData.searchResults) {
+              citations.push({
+                id: sr.document_id || sr.PMID || '',
+                title: sr.title || sr.ARTICLE_CITATION || '',
+                url: sr.source_url || sr.ARTICLE_URL || '',
+                snippet: sr.text || sr.CHUNK || '',
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (sql && !data) {
+    try { data = await executeSql(sql); } catch { /* ignore */ }
+  }
+
+  return { text, sql, data, citations, threadId: json.thread_id };
+}
+
+export async function testConnection(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const rows = await executeSql('SELECT 1 AS OK');
+    return { ok: rows.length > 0 };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}

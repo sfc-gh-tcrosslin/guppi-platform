@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Agent Guardrails - Defense in Depth</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --sf-blue: #29B5E8;
+    --sf-dark-blue: #11567F;
+    --sf-navy: #0D2B45;
+    --sf-light-blue: #E8F7FC;
+    --sf-accent: #49C5B1;
+    --sf-white: #FFFFFF;
+    --sf-gray-50: #F8FAFC;
+    --sf-gray-100: #F1F5F9;
+    --sf-gray-200: #E2E8F0;
+    --sf-gray-400: #94A3B8;
+    --sf-gray-600: #475569;
+    --sf-gray-800: #1E293B;
+    --sf-red: #EF4444;
+    --sf-amber: #F59E0B;
+    --sf-green: #10B981;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--sf-gray-800);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  .slide-container {
+    width: 1280px;
+    height: 720px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slide {
+    width: 1280px;
+    height: 720px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: none;
+    flex-direction: column;
+    background: var(--sf-white);
+    overflow: hidden;
+  }
+
+  .slide.active { display: flex; }
+
+  /* Navigation */
+  .nav {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    z-index: 100;
+    background: rgba(13, 43, 69, 0.9);
+    padding: 8px 20px;
+    border-radius: 24px;
+    backdrop-filter: blur(10px);
+  }
+
+  .nav button {
+    background: var(--sf-blue);
+    color: white;
+    border: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .nav button:hover { background: var(--sf-dark-blue); transform: scale(1.1); }
+  .nav button:disabled { background: var(--sf-gray-400); cursor: not-allowed; transform: none; }
+  .nav .counter { color: var(--sf-gray-200); font-size: 14px; font-weight: 500; min-width: 50px; text-align: center; }
+
+  /* ========== SLIDE 1 ========== */
+  .s1-header {
+    background: linear-gradient(135deg, var(--sf-navy) 0%, var(--sf-dark-blue) 60%, var(--sf-blue) 100%);
+    padding: 36px 56px 28px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .s1-header::after {
+    content: '';
+    position: absolute;
+    top: -80px;
+    right: -80px;
+    width: 320px;
+    height: 320px;
+    border-radius: 50%;
+    background: rgba(41, 181, 232, 0.08);
+  }
+
+  .s1-header .logo-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+
+  .s1-header .snowflake-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .s1-header .logo-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+
+  .s1-header h1 {
+    font-size: 36px;
+    font-weight: 800;
+    color: var(--sf-white);
+    line-height: 1.2;
+    margin-bottom: 6px;
+  }
+
+  .s1-header .subtitle {
+    font-size: 17px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.7);
+  }
+
+  .s1-body {
+    flex: 1;
+    padding: 32px 56px;
+    display: flex;
+    gap: 28px;
+  }
+
+  /* Architecture diagram */
+  .s1-diagram {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+  }
+
+  .layer {
+    display: flex;
+    align-items: stretch;
+    gap: 16px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    position: relative;
+    transition: transform 0.2s;
+  }
+
+  .layer-num {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 800;
+    color: white;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .layer-content { flex: 1; }
+
+  .layer-content h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 3px;
+  }
+
+  .layer-content p {
+    font-size: 12.5px;
+    color: var(--sf-gray-600);
+    line-height: 1.5;
+  }
+
+  .layer-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    display: inline-block;
+    margin-top: 6px;
+    text-transform: uppercase;
+  }
+
+  .layer-1 { background: linear-gradient(135deg, #EFF6FF, #DBEAFE); }
+  .layer-1 .layer-num { background: var(--sf-dark-blue); }
+  .layer-1 h3 { color: var(--sf-dark-blue); }
+  .layer-1 .layer-badge { background: var(--sf-dark-blue); color: white; }
+
+  .layer-2 { background: linear-gradient(135deg, #ECFDF5, #D1FAE5); }
+  .layer-2 .layer-num { background: var(--sf-green); }
+  .layer-2 h3 { color: #065F46; }
+  .layer-2 .layer-badge { background: #065F46; color: white; }
+
+  .layer-3 { background: linear-gradient(135deg, #FFF7ED, #FFEDD5); }
+  .layer-3 .layer-num { background: var(--sf-amber); }
+  .layer-3 h3 { color: #92400E; }
+  .layer-3 .layer-badge { background: #92400E; color: white; }
+
+  .arrow-down {
+    text-align: center;
+    padding: 4px 0;
+    color: var(--sf-gray-400);
+    font-size: 20px;
+    margin-left: 27px;
+  }
+
+  /* Right panel — key insight */
+  .s1-insight {
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .insight-card {
+    background: var(--sf-gray-50);
+    border: 1px solid var(--sf-gray-200);
+    border-radius: 12px;
+    padding: 18px;
+  }
+
+  .insight-card h4 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--sf-gray-800);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .threat-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--sf-gray-200);
+    font-size: 13px;
+  }
+
+  .threat-row:last-child { border-bottom: none; }
+
+  .threat-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .threat-blocked .threat-icon { background: #FEE2E2; }
+  .threat-blocked .threat-label { color: var(--sf-gray-800); font-weight: 500; }
+  .threat-blocked .threat-status { color: var(--sf-red); font-weight: 700; font-size: 11px; margin-left: auto; }
+
+  .principle-box {
+    background: linear-gradient(135deg, var(--sf-navy), var(--sf-dark-blue));
+    border-radius: 12px;
+    padding: 20px;
+    color: white;
+  }
+
+  .principle-box h4 {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    color: var(--sf-blue);
+  }
+
+  .principle-box p {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.8);
+  }
+
+  .principle-box .highlight {
+    color: var(--sf-accent);
+    font-weight: 600;
+  }
+
+  /* ========== SLIDE 2 ========== */
+  .s2-header {
+    background: linear-gradient(135deg, var(--sf-navy) 0%, var(--sf-dark-blue) 100%);
+    padding: 28px 56px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .s2-header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--sf-white);
+  }
+
+  .s2-header .page-badge {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .s2-body {
+    flex: 1;
+    padding: 28px 56px;
+    display: flex;
+    gap: 32px;
+  }
+
+  .s2-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .impl-card {
+    border-radius: 12px;
+    padding: 20px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .impl-card .card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .impl-card .card-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .impl-card .card-header h3 {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .impl-card .card-header .card-tag {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .code-block {
+    background: var(--sf-gray-800);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: #E2E8F0;
+    overflow: hidden;
+    flex: 1;
+  }
+
+  .code-block .kw { color: #93C5FD; }
+  .code-block .fn { color: #67E8F9; }
+  .code-block .str { color: #86EFAC; }
+  .code-block .cm { color: #64748B; }
+  .code-block .op { color: #FCD34D; }
+  .code-block .var { color: #C4B5FD; }
+  .code-block .regex { color: #FCA5A5; }
+
+  .card-snowflake {
+    background: linear-gradient(135deg, #EFF6FF, #DBEAFE);
+    border: 1px solid #BFDBFE;
+  }
+  .card-snowflake .card-icon { background: var(--sf-dark-blue); color: white; }
+  .card-snowflake h3 { color: var(--sf-dark-blue); }
+  .card-snowflake .card-tag { background: var(--sf-dark-blue); color: white; }
+
+  .card-api {
+    background: linear-gradient(135deg, #ECFDF5, #D1FAE5);
+    border: 1px solid #A7F3D0;
+  }
+  .card-api .card-icon { background: #065F46; color: white; }
+  .card-api h3 { color: #065F46; }
+  .card-api .card-tag { background: #065F46; color: white; }
+
+  .card-ui {
+    background: linear-gradient(135deg, #FFF7ED, #FFEDD5);
+    border: 1px solid #FED7AA;
+  }
+  .card-ui .card-icon { background: #92400E; color: white; }
+  .card-ui h3 { color: #92400E; }
+  .card-ui .card-tag { background: #92400E; color: white; }
+
+  .impl-note {
+    font-size: 12px;
+    color: var(--sf-gray-600);
+    line-height: 1.5;
+    margin-top: 10px;
+  }
+
+  /* Footer */
+  .slide-footer {
+    padding: 12px 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--sf-gray-200);
+    background: var(--sf-gray-50);
+  }
+
+  .slide-footer .footer-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--sf-gray-400);
+    font-weight: 500;
+  }
+
+  .slide-footer .footer-right {
+    font-size: 11px;
+    color: var(--sf-gray-400);
+  }
+
+  .mini-snowflake {
+    width: 18px;
+    height: 18px;
+  }
+</style>
+</head>
+<body>
+
+<div class="slide-container">
+  <!-- ========== SLIDE 1: Architecture Overview ========== -->
+  <div class="slide active" id="slide1">
+    <div class="s1-header">
+      <div class="logo-row">
+        <svg class="snowflake-icon" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="18" cy="18" r="16" fill="rgba(255,255,255,0.15)"/>
+          <path d="M18 4v28M6 11l24 14M6 25l24-14" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="18" cy="4" r="2" fill="white"/><circle cx="18" cy="32" r="2" fill="white"/>
+          <circle cx="6" cy="11" r="2" fill="white"/><circle cx="30" cy="25" r="2" fill="white"/>
+          <circle cx="6" cy="25" r="2" fill="white"/><circle cx="30" cy="11" r="2" fill="white"/>
+          <circle cx="18" cy="18" r="3" fill="white"/>
+        </svg>
+        <span class="logo-text">Snowflake Cortex AI</span>
+      </div>
+      <h1>Agent Guardrails: Defense in Depth</h1>
+      <div class="subtitle">Securing Cortex Agent responses with layered protection</div>
+    </div>
+
+    <div class="s1-body">
+      <div class="s1-diagram">
+        <div class="layer layer-1">
+          <div class="layer-num">1</div>
+          <div class="layer-content">
+            <h3>Snowflake Platform Layer</h3>
+            <p>Cortex Analyst generates <b>SELECT-only</b> SQL by design. Database roles enforce least-privilege access with read-only grants on ontology views.</p>
+            <span class="layer-badge">Server-Side &bull; Strongest</span>
+          </div>
+        </div>
+        <div class="arrow-down">&#8595;</div>
+        <div class="layer layer-2">
+          <div class="layer-num">2</div>
+          <div class="layer-content">
+            <h3>API / Client Validation Layer</h3>
+            <p>SQL statement validator in <code>mcp-client.ts</code> rejects any DML/DDL before execution. Acts as the chokepoint between agent output and database.</p>
+            <span class="layer-badge">Client-Side &bull; High Impact</span>
+          </div>
+        </div>
+        <div class="arrow-down">&#8595;</div>
+        <div class="layer layer-3">
+          <div class="layer-num">3</div>
+          <div class="layer-content">
+            <h3>User Interface Layer</h3>
+            <p>Display generated SQL to user before execution. Optional confirmation step enables <b>human-in-the-loop</b> review for sensitive queries.</p>
+            <span class="layer-badge">UX &bull; Transparency</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="s1-insight">
+        <div class="insight-card">
+          <h4>Blocked by Guardrails</h4>
+          <div class="threat-row threat-blocked">
+            <div class="threat-icon">&#128683;</div>
+            <span class="threat-label">INSERT / UPDATE / DELETE</span>
+            <span class="threat-status">BLOCKED</span>
+          </div>
+          <div class="threat-row threat-blocked">
+            <div class="threat-icon">&#128683;</div>
+            <span class="threat-label">DROP / ALTER / CREATE</span>
+            <span class="threat-status">BLOCKED</span>
+          </div>
+          <div class="threat-row threat-blocked">
+            <div class="threat-icon">&#128683;</div>
+            <span class="threat-label">TRUNCATE / MERGE</span>
+            <span class="threat-status">BLOCKED</span>
+          </div>
+          <div class="threat-row threat-blocked">
+            <div class="threat-icon">&#128683;</div>
+            <span class="threat-label">GRANT / REVOKE</span>
+            <span class="threat-status">BLOCKED</span>
+          </div>
+        </div>
+
+        <div class="principle-box">
+          <h4>Zero Trust Principle</h4>
+          <p>No single layer is trusted alone. Even though Cortex Analyst <span class="highlight">only generates SELECT</span> statements, we validate at every boundary. If the model, protocol, or integration changes, the guardrails still hold.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <div class="footer-left">
+        <svg class="mini-snowflake" viewBox="0 0 36 36" fill="none"><path d="M18 4v28M6 11l24 14M6 25l24-14" stroke="#94A3B8" stroke-width="2.5" stroke-linecap="round"/><circle cx="18" cy="18" r="2.5" fill="#94A3B8"/></svg>
+        Healthcare Ontology Agent &mdash; TRE_HEALTHCARE_DB.ONTOLOGY
+      </div>
+      <div class="footer-right">1 / 2</div>
+    </div>
+  </div>
+
+  <!-- ========== SLIDE 2: Implementation Detail ========== -->
+  <div class="slide" id="slide2">
+    <div class="s2-header">
+      <h1>Implementation: Where &amp; How</h1>
+      <span class="page-badge">Technical Detail</span>
+    </div>
+
+    <div class="s2-body">
+      <div class="s2-col">
+        <div class="impl-card card-snowflake">
+          <div class="card-header">
+            <div class="card-icon">&#10052;</div>
+            <h3>Snowflake Grants</h3>
+            <span class="card-tag">Layer 1</span>
+          </div>
+          <div class="code-block">
+<span class="cm">-- Read-only role for the agent</span>
+<span class="kw">CREATE ROLE</span> <span class="var">ontology_reader</span>;
+
+<span class="kw">GRANT</span> <span class="str">USAGE</span> <span class="kw">ON</span> DATABASE
+  TRE_HEALTHCARE_DB <span class="kw">TO ROLE</span> <span class="var">ontology_reader</span>;
+
+<span class="kw">GRANT</span> <span class="str">SELECT</span> <span class="kw">ON ALL VIEWS IN SCHEMA</span>
+  TRE_HEALTHCARE_DB.ONTOLOGY
+  <span class="kw">TO ROLE</span> <span class="var">ontology_reader</span>;
+
+<span class="cm">-- No INSERT, UPDATE, DELETE, DDL</span>
+          </div>
+          <div class="impl-note">Enforced by Snowflake regardless of SQL content. The agent's service role can never modify data.</div>
+        </div>
+      </div>
+
+      <div class="s2-col">
+        <div class="impl-card card-api" style="flex: 1.2;">
+          <div class="card-header">
+            <div class="card-icon">&#9899;</div>
+            <h3>SQL Validator &mdash; mcp-client.ts</h3>
+            <span class="card-tag">Layer 2</span>
+          </div>
+          <div class="code-block">
+<span class="kw">function</span> <span class="fn">validateSQL</span>(sql: <span class="var">string</span>): <span class="var">boolean</span> {
+  <span class="kw">const</span> <span class="var">blocked</span> <span class="op">=</span> <span class="regex">/\b(INSERT|UPDATE|DELETE</span>
+    <span class="regex">|DROP|ALTER|CREATE|TRUNCATE</span>
+    <span class="regex">|MERGE|GRANT|REVOKE|COPY</span>
+    <span class="regex">|PUT|REMOVE)\b/i</span>;
+
+  <span class="kw">if</span> (<span class="var">blocked</span>.<span class="fn">test</span>(sql)) {
+    console.<span class="fn">error</span>(<span class="str">'Blocked:'</span>, sql);
+    <span class="kw">return false</span>;
+  }
+  <span class="kw">return true</span>;
+}
+          </div>
+          <div class="impl-note">Runs before <code>executeSQL()</code> &mdash; the single chokepoint between agent and database. Rejects anything that isn't a read operation.</div>
+        </div>
+
+        <div class="impl-card card-ui" style="flex: 0.8;">
+          <div class="card-header">
+            <div class="card-icon">&#128065;</div>
+            <h3>User Confirmation</h3>
+            <span class="card-tag">Layer 3</span>
+          </div>
+          <div class="code-block">
+<span class="cm">// Show SQL before executing</span>
+<span class="kw">const</span> <span class="var">approved</span> <span class="op">=</span> <span class="kw">await</span> <span class="fn">showSQLPreview</span>(sql);
+
+<span class="kw">if</span> (<span class="var">approved</span> <span class="op">&&</span> <span class="fn">validateSQL</span>(sql)) {
+  <span class="kw">const</span> <span class="var">data</span> <span class="op">=</span> <span class="kw">await</span> client.<span class="fn">executeSQL</span>(sql);
+}
+          </div>
+          <div class="impl-note">Human-in-the-loop. User sees the SQL and decides whether to run it. Ideal for sensitive datasets.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <div class="footer-left">
+        <svg class="mini-snowflake" viewBox="0 0 36 36" fill="none"><path d="M18 4v28M6 11l24 14M6 25l24-14" stroke="#94A3B8" stroke-width="2.5" stroke-linecap="round"/><circle cx="18" cy="18" r="2.5" fill="#94A3B8"/></svg>
+        Healthcare Ontology Agent &mdash; TRE_HEALTHCARE_DB.ONTOLOGY
+      </div>
+      <div class="footer-right">2 / 2</div>
+    </div>
+  </div>
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button id="prevBtn" onclick="changeSlide(-1)" disabled>&#8592;</button>
+  <span class="counter" id="slideCounter">1 / 2</span>
+  <button id="nextBtn" onclick="changeSlide(1)">&#8594;</button>
+</div>
+
+<script>
+  let current = 0;
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+
+  function changeSlide(dir) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(total - 1, current + dir));
+    slides[current].classList.add('active');
+    document.getElementById('slideCounter').textContent = `${current + 1} / ${total}`;
+    document.getElementById('prevBtn').disabled = current === 0;
+    document.getElementById('nextBtn').disabled = current === total - 1;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') changeSlide(1);
+    if (e.key === 'ArrowLeft') changeSlide(-1);
+  });
+</script>
+</body>
+</html>
