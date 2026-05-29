@@ -1,7 +1,7 @@
 {
   "name": "coco-platform",
-  "description": "Universal AI engineering platform — TARS trust auditor, SDLC enforcement, GUPPI command center, The Bond shared cognition, and enterprise pipeline governance. Levels 2-7 of the CoCo Maturity Model.",
-  "version": "1.0.0",
+  "description": "Universal AI engineering platform — GuppiWheel value creation engine, TARS trust auditor, GUPPI command center, The Bond shared cognition, Rocky autonomous research, and enterprise pipeline governance. Levels 2-7 of the CoCo Maturity Model.",
+  "version": "2.0.0",
   "author": {
     "name": "CoCo + Todd Crosslin",
     "url": "https://github.com/JacinthLaval"
