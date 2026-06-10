@@ -2,6 +2,38 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.3.0] — 2026-06-10
+
+### A note for the consumer's CoCo (read this first)
+
+Hello. If you're reading this, you're another CoCo agent picking up the v3.3 release. Before you do anything, here's the story you need.
+
+In v3.0 we built the wheel — `GUPPIWHEEL.PUBLIC.ARTIFACTS` as the single source of truth, lifecycle stages, agents, the whole substrate. In v3.1 we codified `RULE-019 Engine Additive-Only` — the rule that makes the customer's content uncrushable across versions. In v3.2 we added the three-tier distribution model: T1 GitHub Drop, T2 Share Loop, T3 Sovereign Loop, with the JOIN_LOOP handshake to opt in.
+
+For v3.2 we still believed surface bytes (skill markdown, hooks, manifest, viewer) had to flow through GitHub or stage tarballs. That was an over-engineered assumption. **v3.3 collapses the byte-distribution problem.** Surface and seed both distribute as **concepts** in VARIANT columns, the same way our skill-registry already works. Your job, on upgrade, is not to copy bytes — it's to read the new concepts from the wheel and materialize them into your own local files, in your own voice, merged with anything the local customer has already customized. The doctrine narrative `NAR-29-DOCTRINE` has the full theory under `T_doctrine.distribution_mechanism`. Read that before you write anything.
+
+The shape of your upgrade is roughly: query the substrate for what's new, surface the changes to your customer, materialize concepts to local files only with explicit ACCEPT, never overwrite hand-edits, never remove what was there, only add. Per RULE-019, additive-only now applies to local files too — not just db state.
+
+### Added
+
+- **Concept-distribution model** as the default mechanism for shipping plugin components. Surface and seed layers no longer require byte transfer (except at cold-start). The wheel carries the *idea* of each component (skill, hook, manifest); consumer CoCos materialize local files themselves. RULE-015 applied recursively to the platform's own distribution.
+- `T_doctrine.distribution_mechanism` sub-section in `NAR-29-DOCTRINE` — explicit specification of how concepts are shaped and how consumers materialize them.
+- `Bond/concept-distribution-not-byte-distribution` — the doctrine spark with full rationale and concept-shape examples.
+
+### Changed
+
+- **The role of GitHub clarified.** GitHub carries seed-the-substrate bytes at cold-start (fresh account, no wheel yet, no share yet). After substrate is live, GitHub stops mattering for ongoing distribution. The wheel becomes the substrate-and-concept distribution channel.
+- **Earlier substrate/seed/surface bond entry** (`plugin-distribution-substrate-seed-surface`) marked as superseded-in-part. The three-layer teaching frame is still useful; the byte-distribution assumption was wrong.
+- **RULE-019 extends to local files** via the materialization contract. Concept changes that would destroy a consumer's local customizations are forbidden. Additive-only is now a property of how local files evolve, not just how db state evolves.
+
+### What this means for upgrading consumers
+
+If you're a CoCo on the same Snowflake account as the publisher, you already see the v3.3 substrate the moment it's published — the rules, narratives, agents, doctrine diagrams. What you upgrade locally is the *surface* layer, by reading concepts from the wheel and writing your own local files. You do not download a tarball. You do not fetch from GitHub for the surface layer. You query the wheel, you read, you write.
+
+If you're on a different account, accept the share, run `JOIN_LOOP`, then do the same as above. The share carries the CATALOG and the CONCEPTS; you materialize.
+
+If you're at cold-start (no substrate yet), clone the GitHub repo and run `bootstrap.sql` first. Once substrate exists, you join the loop and switch to concept-distribution for everything thereafter.
+
 ## [3.2.0] — 2026-06-10
 
 ### Added
