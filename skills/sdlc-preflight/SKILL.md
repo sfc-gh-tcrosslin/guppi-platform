@@ -255,6 +255,99 @@ PARSE_JSON('{"insight": "Customer uses Wolters Kluwer Medi-Span for DUR. License
 ARRAY_CONSTRUCT('f6', 'dur', 'medi-span', 'architecture'), 'co-created', 'decision', 'session-44'
 ```
 
+### Check 13: Plugin / Live Account Sync (guppi-platform only)
+
+For plugins that ship Snowflake objects (guppi-platform), the live account state must match what the plugin's seeds describe. This catches drift introduced by direct edits in Snowsight, hotfixes that didn't make it back into seeds, and version mismatches.
+
+**Source of truth:** the plugin's seed files. Live state should always match.
+
+#### 13.1 Plugin version match
+
+```sql
+SELECT VERSION FROM GUPPIWHEEL.PUBLIC.PLUGIN_VERSION WHERE PLUGIN_NAME = 'guppi-platform';
+```
+
+Compare to `version` field in `.cortex-plugin/plugin.json`. **Mismatch = run `seeds/upgrades/<from>-to-<to>.sql`.**
+
+#### 13.2 Schema match
+
+For each table seeds/engine/01_schema.sql declares (ARTIFACTS, RULES, VIOLATIONS, ID_CONVENTIONS, INITIATIVE_STEPS, ARTIFACT_LAUNCHES, PLUGIN_VERSION, PRODUCTS), compare:
+
+```sql
+DESC TABLE GUPPIWHEEL.PUBLIC.<TABLE_NAME>;
+```
+
+against the DDL in the seed. **Extra columns or missing columns = drift.**
+
+#### 13.3 Rules match
+
+```sql
+SELECT RULE_ID FROM GUPPIWHEEL.PUBLIC.RULES ORDER BY RULE_ID;
+```
+
+Every RULE_ID in the seed must exist live, and vice versa. Any rule that exists live but not in `seeds/engine/02_rules.sql` is drift — either promote the live rule into seeds or remove it from live.
+
+#### 13.4 Procs / agents / task / semantic view present
+
+```sql
+SHOW PROCEDURES IN SCHEMA GUPPIWHEEL.PUBLIC;
+SHOW AGENTS IN SCHEMA GUPPIWHEEL.PUBLIC;
+SHOW TASKS IN SCHEMA GUPPIWHEEL.PUBLIC;
+SHOW SEMANTIC VIEWS IN SCHEMA GUPPIWHEEL.PUBLIC;
+```
+
+Required objects:
+- Procs: ADVANCE_STAGE, SUBMIT_INITIATIVE, ROCKY_EXECUTE, PUBLISH_ARTIFACT, GET_ARTIFACT_LAUNCH
+- Agents: ROCKY_AGENT, GUPPIWHEEL_COWORK_AGENT
+- Tasks: ROCKY_TASK (state=`started`)
+- Semantic views: GUPPIWHEEL_SV
+
+**Missing object = drift; re-run `seeds/engine/03_procs.sql` / `04_semantic_view.sql` / `05_agents.sql`.**
+
+#### 13.5 Stage hygiene (RULE-018 enforcement)
+
+For every NARRATIVE / APP / MODEL / DASHBOARD artifact with `metadata.launch.app_type IN ('static_html', 'pdf')`:
+
+```sql
+SELECT a.ID, a.METADATA:launch:stage_path::VARCHAR AS stage_path
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.TYPE IN ('NARRATIVE','APP','MODEL','DASHBOARD')
+  AND a.METADATA:launch:app_type::VARCHAR IN ('static_html', 'pdf');
+```
+
+For each row's `stage_path`, run `LIST` on the stage and confirm the file exists. Orphaned artifacts (pointing at missing files) get flagged.
+
+#### 13.6 Identifier hygiene
+
+For every artifact with `app_type IN ('cortex_agent', 'streamlit', 'native_app')`, verify the identifier resolves:
+
+```sql
+SHOW AGENTS;
+SHOW STREAMLITS;
+SHOW APPLICATIONS;
+```
+
+Orphaned identifiers (artifact references an agent/streamlit/app that doesn't exist) get flagged.
+
+#### 13.7 Local-path scan
+
+```bash
+grep -r "Downloads/CoCoStuff" guppi-platform/seeds/ guppi-platform/skills/guppi/render_guppi.py
+```
+
+Zero matches required. Local file paths in production seeds violate RULE-018.
+
+```sql
+SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE TYPE IN ('NARRATIVE','APP','MODEL','DASHBOARD')
+  AND METADATA::VARCHAR LIKE '%Downloads/CoCoStuff%';
+```
+
+Zero rows required.
+
+**Pass criteria:** All 13.1-13.7 sub-checks pass. Drift items get a fix command in the report.
+**Fail criteria:** Any sub-check shows drift. Push blocks until either the seed catches up to live, or live is reset from seeds.
+
 Applies to all repos with skills that are also registered in SKILL_REGISTRY.PUBLIC.SKILLS.
 
 **The source of truth is the Snowflake table, not the local file.** If they drift, the local file is wrong.
@@ -434,3 +527,62 @@ Push targets:
   → origin: https://github.com/JacinthLaval/coco-playbook.git
   → snowflake: https://github.com/sfc-gh-tcrosslin/coco-playbook.git
 ```
+
+### Check 15: Plan-to-wheel sync (guppi-platform only)
+
+Every `.plan.md` file in `~/.snowflake/cortex/plans/` (or the playground equivalent) modified in the last 7 days should have a corresponding NARRATIVE artifact in the wheel. Plans on disk without wheel narratives are dogfood violations of RULE-013.
+
+**How to check:**
+
+```bash
+# 1. List recent plan files
+RECENT_PLANS=$(find ~/.snowflake/cortex/plans ~/.snowflake/cortex/playground/workspace/.snowflake/cortex/plans -name "*.plan.md" -mtime -7 2>/dev/null)
+```
+
+For each plan file basename, query:
+
+```sql
+SELECT a.ID, a.TITLE, a.METADATA:launch:stage_path::VARCHAR AS stage_path
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.TYPE = 'NARRATIVE'
+  AND a.METADATA:launch:stage_path::VARCHAR LIKE '%' || :plan_basename || '%';
+```
+
+**Pass criteria:** every recent plan file has at least one matching NARRATIVE artifact.
+**Fail criteria:** orphan plans (file on disk, no wheel artifact). The drift report lists each orphan with a fix command:
+
+```
+Orphan plan: <plan-name>.plan.md
+Fix: /wheel publish-plan <plan-name>.plan.md
+   (or call PUBLISH_ARTIFACT manually if no /wheel skill available)
+```
+
+**Skip criteria:** plan files older than 7 days (covered by historical backfill, separate exercise) or explicitly tagged with `[archive]` in their title.
+
+### Check 16: Commit-to-wheel reference (guppi-platform only)
+
+Every git commit in `guppi-platform/` from the last 7 days should contain a `Wheel: INIT-N` (or `Wheel: NONE; reason: <text>`) footer in the commit message. The pre-push git hook enforces this on push, but Check 16 catches commits that were authored without the footer and haven't been pushed yet — letting you fix them before the push fails.
+
+**How to check:**
+
+```bash
+git log --since="7 days ago" --pretty=format:"%H|%s|%b" -- . | while IFS='|' read -r sha subject body; do
+  if ! echo "$body" | grep -qE '^Wheel: (INIT-[0-9]+|NONE)'; then
+    echo "ORPHAN: $sha $subject"
+  fi
+done
+```
+
+For each orphan commit:
+- If not yet pushed: suggest `/wheel link-commit <sha>` to amend
+- If already pushed: suggest a follow-up commit referencing the relevant initiative
+- If the commit was an emergency hotfix: confirm a `Wheel: NONE; reason: <text>` was acceptable (logged in drift report)
+
+**Pass criteria:** every commit in the window has a Wheel footer (INIT-N or explicit NONE).
+**Fail criteria:** orphan commits exist. Drift report counts and lists them.
+
+**Override accounting:** if any commit uses `Wheel: NONE; reason: <text>`, sum these by month and surface as a "wheel discipline rate" metric. Trends downward over time as the loop becomes habitual.
+
+### Check 17 (placeholder): future plan-to-initiative sync
+
+Once Phase 5 of the dogfood plan ships (advance INIT-27 to Built), add a check that every recent plan narrative is parented to an INITIATIVE in the wheel (not just floating). For now Check 15 implicitly covers this since the publish-plan command always sets PARENT_ID.

@@ -4,11 +4,24 @@
 
 GUPPI is an AI-native SDLC + Ops + QA platform running entirely in Snowflake. One queryable database replaces Jira, ServiceNow, PagerDuty, and manual QA.
 
+## Running the viewer
+
+```bash
+pip install -r skills/guppi/requirements.txt
+SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --serve
+```
+
+Open http://localhost:8888. Two tabs:
+- **Command Center** — SDLC view (epics, stories, defects, incidents, audits, initiatives)
+- **Flywheel** — single-list initiative view; click to expand for child counts and the Open button on launchable artifacts
+
+Without `--serve`, the script writes a static HTML to `~/Downloads/GUPPI.html` and exits.
+
 ## Setup (First Use)
 
 Before creating any work items, configure your naming conventions:
 
-1. Query `GUPPI.PLATFORM.ID_CONVENTIONS` to see current rules
+1. Query `GUPPIWHEEL.PUBLIC.ID_CONVENTIONS` to see current rules
 2. Each entity type has a PREFIX_PATTERN and NEXT_SEQ
 3. When generating a new ID, read the pattern + increment NEXT_SEQ
 
@@ -310,7 +323,7 @@ On first use (or when no config is detected), determine the backend:
 
 | Backend | Setup | Storage |
 |---|---|---|
-| **GUPPI Native** (default) | Zero setup — direct SQL | GUPPI.PLATFORM.STORIES |
+| **GUPPIWHEEL Native** (default) | Zero setup — direct SQL | GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE='STORY' |
 | **Jira (MCP)** | Requires Jira MCP server connection | Jira project via API |
 | **ServiceNow (MCP)** | Requires ServiceNow MCP connection | ServiceNow incidents/stories |
 | **Manual** | No tracker — log to Bond only | THE_BOND.PUBLIC.MEMORY_STORE |
@@ -331,7 +344,7 @@ All Enterprise Build Profile operations use these abstract verbs. The backend ma
 
 When TARS completes an audit, results are automatically logged to the configured tracker:
 
-- **GUPPI**: INSERT INTO GUPPI.PLATFORM.AUDIT_RUNS with trust score, C/D signals
+- **GUPPIWHEEL**: INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS with TYPE='AUDIT', trust score in CONTENT
 - **Jira**: Add comment to the linked story with trust score breakdown
 - **Manual**: Bond entry only (always written regardless of backend)
 

@@ -4,23 +4,41 @@
 
 GuppiWheel is the flywheel that tracks the full lifecycle of value creation. One table, one schema, lineage via parent_id. Every artifact progresses through stages. Templates are reusable. Spins are deployable.
 
+## Guiding Principles (ENFORCE THESE)
+
+1. **Headless First** — All outputs (research, proposals, narratives, briefs) MUST be written as artifacts in `GUPPIWHEEL.PUBLIC.ARTIFACTS` before any external render (Google Doc, HTML, slides, PDF). The flywheel is the source of truth. Render FROM artifacts, never instead of them. If the user asks for a "doc" or "proposal" or "brief" — the FIRST action is INSERT into the flywheel. Rendering is a SECOND, optional step.
+
+2. **Raw → Structured → Queryable** — Anything unstructured with value (PDFs, fee schedules, research papers) gets ingested raw, parsed to structured, then made queryable. Never leave value trapped in a file.
+
+3. **Server-Side First** — Logic lives in Snowflake (procs, tasks, rules, policies), not in client code. CoCo is the interface, not the engine.
+
+4. **We Own Architecture, They Own Data** — Snowflake owns the intelligence architecture (flywheel, rules, agents). Customer owns their data. We never need their real data to demonstrate value.
+
+5. **Rules Are Data** — Governance rules are rows in GUPPIWHEEL.PUBLIC.RULES, not hardcoded logic. They're versioned, queryable, and enforceable via ADVANCE_STAGE().
+
+6. **Narrative Is First-Class** — Every spin must produce a NARRATIVE artifact. The story IS the deliverable. Viz, code, and models serve the narrative.
+
+7. **Spins Compound** — Each spin makes the next one faster. Templates, patterns, and architecture are reusable. 50 IPs × 10 spins/month × 6 months = 3,000 synthetic industry twins.
+
+8. **The Sphere** — Intelligence is omnidirectional, not linear. Any artifact can connect to any other. The flywheel is a circle; the full system is a sphere.
+
 ## Core Concepts
 
 - **Artifact** — any first-class object in the flywheel (initiative, research, story, app, model, hero, narrative, skill, audit, memory)
-- **Stage** — lifecycle position: spark → active → built → proven → told → archived
+- **Stage** — lifecycle position: Initiate → Research → Building → Built → Narrated
 - **Spin** — one complete pass through the flywheel (initiative to narrative, ready to deploy)
 - **Template** — reusable visualization pattern (Diverging Rivers, Parallel Futures, Waterfall, Sankey, Trajectory Archetypes)
 - **Ecosystem** — PK's market taxonomy (60 categories, 600+ companies, CRM-validated)
 
-## Database: FLYWHEEL
+## Database: GUPPIWHEEL
 
 ### ARTIFACTS Table
 
 ```sql
-FLYWHEEL.PUBLIC.ARTIFACTS
+GUPPIWHEEL.PUBLIC.ARTIFACTS
 ├── ID          VARCHAR(36) PK — UUID or readable slug (e.g., 'ab-init-001')
 ├── TYPE        VARCHAR(20) — initiative, research, story, app, model, hero, narrative, skill, audit, defect, memory, ops_event
-├── STAGE       VARCHAR(20) — spark, active, built, proven, told, archived
+├── STAGE       VARCHAR(20) — Initiate, Research, Building, Built, Narrated
 ├── PARENT_ID   VARCHAR(36) — lineage: what produced this artifact
 ├── TITLE       VARCHAR(500)
 ├── CONTENT     VARIANT — flexible payload per type
@@ -52,9 +70,9 @@ Parent_id creates a DAG. Query any artifact's full chain:
 ```sql
 -- Get full lineage from an initiative
 WITH RECURSIVE lineage AS (
-  SELECT * FROM FLYWHEEL.PUBLIC.ARTIFACTS WHERE ID = :root_id
+  SELECT * FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :root_id
   UNION ALL
-  SELECT a.* FROM FLYWHEEL.PUBLIC.ARTIFACTS a
+  SELECT a.* FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
   JOIN lineage l ON a.PARENT_ID = l.ID
 )
 SELECT ID, TYPE, STAGE, TITLE, PARENT_ID FROM lineage ORDER BY CREATED_AT;
@@ -72,7 +90,7 @@ Always use readable IDs with a prefix pattern:
 - Narratives: `{region}-narr-{NNN}`
 
 ```sql
-INSERT INTO FLYWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, PARENT_ID, TITLE, CONTENT, TAGS, OWNER, METADATA)
+INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, PARENT_ID, TITLE, CONTENT, TAGS, OWNER, METADATA)
 SELECT '{id}', '{type}', '{stage}', '{parent_id}', '{title}',
   OBJECT_CONSTRUCT('key1','val1','key2','val2'),
   ARRAY_CONSTRUCT('tag1','tag2'),
@@ -105,10 +123,10 @@ A spin = one complete flywheel pass, ready to package for a customer:
 
 ```sql
 -- Find all artifacts in a spin
-SELECT * FROM FLYWHEEL.PUBLIC.ARTIFACTS
+SELECT * FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
 WHERE ID = :root_id
    OR PARENT_ID = :root_id
-   OR PARENT_ID IN (SELECT ID FROM FLYWHEEL.PUBLIC.ARTIFACTS WHERE PARENT_ID = :root_id)
+   OR PARENT_ID IN (SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE PARENT_ID = :root_id)
 ORDER BY CREATED_AT;
 ```
 
@@ -126,7 +144,7 @@ ORDER BY CREATED_AT;
 
 ```sql
 -- "Which customers in Category 20 (Population Health) could use the Alberta spin?"
-SELECT company, crm_status FROM FLYWHEEL.PUBLIC.ECOSYSTEM
+SELECT company, crm_status FROM GUPPIWHEEL.PUBLIC.ECOSYSTEM
 WHERE category_id = 20 AND crm_status = 'customer';
 ```
 
@@ -142,7 +160,7 @@ WHERE category_id = 20 AND crm_status = 'customer';
 
 When a new IP connects their CoCo to this Snowflake account:
 
-1. CoCo queries FLYWHEEL.PUBLIC.ARTIFACTS to discover existing spins
+1. CoCo queries GUPPIWHEEL.PUBLIC.ARTIFACTS to discover existing spins
 2. CoCo reads this skill doc to understand the schema and operating model
 3. CoCo uses `plugin-creator` to scaffold a local plugin from the DB state
 4. IP is now "in the system" — can create artifacts, fork spins, contribute templates

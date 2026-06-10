@@ -33,6 +33,26 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "create_plan",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/lifecycle.sh post-create-plan",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "switch_mode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash hooks/lifecycle.sh post-switch-mode",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [

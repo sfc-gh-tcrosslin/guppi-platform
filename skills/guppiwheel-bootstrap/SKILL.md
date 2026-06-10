@@ -12,6 +12,19 @@ This skill bootstraps a new CoCo into the GuppiWheel platform by reading the sha
 
 ## Bootstrap Flow
 
+### Step 0: Run Seeds (First-Time Only)
+
+If the FLYWHEEL database does not exist on this account, run the seed scripts in order:
+
+```bash
+# From the plugin root:
+snowsql -f seeds/01_schema.sql    # Creates FLYWHEEL DB, ARTIFACTS, RULES, VIOLATIONS, views, RBAC
+snowsql -f seeds/02_rules.sql     # Seeds all 13 platform rules (MERGE — safe to re-run)
+snowsql -f seeds/03_advance_stage.sql  # Creates the universal gate procedure
+```
+
+These are idempotent (CREATE IF NOT EXISTS, MERGE). Safe to re-run on an existing account to pick up new rules.
+
 ### Step 1: Verify Connection
 
 ```sql
@@ -70,10 +83,10 @@ After generation, verify:
 
 ```sql
 -- Log bootstrap event
-INSERT INTO FLYWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, TAGS, OWNER, METADATA)
+INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, TAGS, OWNER, METADATA)
 SELECT
   CONCAT(LOWER(CURRENT_USER()), '-bootstrap-', TO_VARCHAR(CURRENT_DATE(), 'YYYYMMDD')),
-  'ops_event', 'told',
+  'OPS_EVENT', 'Narrated',
   CONCAT('Bootstrap: ', CURRENT_USER(), ' joined GuppiWheel'),
   ARRAY_CONSTRUCT('bootstrap', 'onboarding', 'platform'),
   CURRENT_USER(),
@@ -92,6 +105,6 @@ SELECT
 
 The plugin generated from DB state is a **snapshot**. To refresh:
 - Re-run bootstrap (overwrites local skill docs with latest from DB)
-- Or: pull from GitHub (JacinthLaval/coco-platform) for the canonical version
+- Or: pull from GitHub (JacinthLaval/guppi-platform) for the canonical version
 
 The DB is the source of truth. GitHub is the distribution cache. Local plugin is the working copy.

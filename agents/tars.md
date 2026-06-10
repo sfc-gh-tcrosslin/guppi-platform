@@ -46,7 +46,35 @@ B = selection pressure (audit enforcement strength)
 
 ## Storage
 
-Write audit results to GUPPI.PLATFORM.AUDIT_RUNS and AUDIT_FINDINGS.
+Write audit results to GUPPIWHEEL.PUBLIC.ARTIFACTS as `TYPE='AUDIT'`:
+
+```sql
+INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, OWNER, PARENT_ID, CONTENT, METADATA)
+SELECT
+  'AUDIT-' || (SELECT NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = 'AUDIT'),
+  'AUDIT', 'Built',
+  '<target_name> (<target_type>)',
+  'TARS',
+  '<parent_artifact_id_or_null>',
+  PARSE_JSON(OBJECT_CONSTRUCT(
+    'target', <target_name>,
+    'target_type', <target_type>,
+    'score', <trust_score>,
+    'grade', <grade>,
+    'c_signals', <c>,
+    'd_signals', <d>,
+    'total_checks', <n>,
+    'builder_vote', <builder_vote>,
+    'tars_vote', <tars_vote>,
+    'human_vote', NULL,
+    'findings', <findings_array>
+  )::VARCHAR),
+  PARSE_JSON(OBJECT_CONSTRUCT('trust_score', <trust_score>, 'grade', <grade>)::VARCHAR);
+```
+
+Don't forget to bump `ID_CONVENTIONS.NEXT_SEQ` for ENTITY='AUDIT'.
+
+The findings array embeds individual check results inline (no separate AUDIT_FINDINGS table — everything lives in the artifact's CONTENT).
 
 ## Personality
 

@@ -22,162 +22,119 @@ def query_guppi():
     )
     cur = conn.cursor()
 
-    cur.execute("SELECT PRODUCT_ID, NAME, DESCRIPTION, STATUS FROM GUPPI.PLATFORM.PRODUCTS ORDER BY NAME")
+    # Products (used by Command Center for grouping)
+    cur.execute("SELECT PRODUCT_ID, NAME, DESCRIPTION, STATUS FROM GUPPIWHEEL.PUBLIC.PRODUCTS ORDER BY NAME")
     products = [{"id": r[0], "name": r[1], "description": r[2], "status": r[3]} for r in cur.fetchall()]
 
-    cur.execute("SELECT EPIC_ID, PRODUCT_ID, NAME, DESCRIPTION, STATUS FROM GUPPI.PLATFORM.EPICS ORDER BY SORT_ORDER, NAME")
-    epics = [{"id": r[0], "product_id": r[1], "name": r[2], "description": r[3], "status": r[4]} for r in cur.fetchall()]
+    # Epics from GUPPIWHEEL
+    cur.execute("SELECT ID, METADATA:product::VARCHAR, TITLE, CONTENT:description::VARCHAR, STAGE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'EPIC' ORDER BY TITLE")
+    epics = [{"id": r[0], "product_id": r[1] or "", "name": r[2], "description": r[3] or "", "status": r[4]} for r in cur.fetchall()]
 
     cur.execute("""
-        SELECT s.STORY_ID, s.EPIC_ID, s.TITLE, s.DESCRIPTION, s.PRIORITY, s.STATUS, 
-               s.STORY_POINTS, s.ASSIGNEE, s.SPRINT,
-               TO_VARCHAR(s.CREATED_AT, 'YYYY-MM-DD'), TO_VARCHAR(s.UPDATED_AT, 'YYYY-MM-DD'),
-               e.PRODUCT_ID
-        FROM GUPPI.PLATFORM.STORIES s
-        JOIN GUPPI.PLATFORM.EPICS e ON s.EPIC_ID = e.EPIC_ID
-        ORDER BY s.PRIORITY, s.STORY_ID
+        SELECT ID, PARENT_ID, TITLE, CONTENT:description::VARCHAR, 
+               METADATA:priority::VARCHAR, STAGE, METADATA:story_points::NUMBER,
+               OWNER, METADATA:sprint::VARCHAR,
+               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD'), TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD'),
+               METADATA:product::VARCHAR
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+        WHERE TYPE = 'STORY'
+        ORDER BY METADATA:priority, ID
     """)
     stories = []
     for r in cur.fetchall():
+        stage_to_status = {'Building':'DONE','Research':'IN_PROGRESS','Initiate':'BACKLOG','Built':'DONE','Narrated':'DONE'}
         stories.append({
-            "id": r[0], "epic_id": r[1], "title": r[2], "description": r[3] or "",
-            "priority": r[4], "status": r[5], "type": "STORY",
-            "points": r[6], "assignee": r[7], "sprint": r[8],
-            "created": r[9], "updated": r[10], "product_id": r[11]
+            "id": r[0], "epic_id": r[1] or "", "title": r[2], "description": r[3] or "",
+            "priority": r[4] or "P2", "status": stage_to_status.get(r[5], 'BACKLOG'), "type": "STORY",
+            "points": r[6], "assignee": r[7] or "", "sprint": r[8] or "",
+            "created": r[9] or "", "updated": r[10] or "", "product_id": r[11] or ""
         })
 
     cur.execute("""
-        SELECT d.DEFECT_ID, d.EPIC_ID, d.TITLE, d.DESCRIPTION, d.SEVERITY, d.PRIORITY, d.STATUS,
-               d.FOUND_IN_VERSION, d.FIXED_IN_VERSION, d.REPRODUCTION_STEPS, d.REPORTED_BY,
-               d.RELATED_STORY_ID, d.RELATED_INCIDENT_ID, d.REOPEN_COUNT,
-               TO_VARCHAR(d.CREATED_AT, 'YYYY-MM-DD'), TO_VARCHAR(d.UPDATED_AT, 'YYYY-MM-DD'),
-               e.PRODUCT_ID
-        FROM GUPPI.PLATFORM.DEFECTS d
-        JOIN GUPPI.PLATFORM.EPICS e ON d.EPIC_ID = e.EPIC_ID
-        ORDER BY d.SEVERITY, d.PRIORITY
+        SELECT ID, PARENT_ID, TITLE, CONTENT:description::VARCHAR, 
+               METADATA:severity::VARCHAR, METADATA:priority::VARCHAR, STAGE,
+               CONTENT:fixed_in::VARCHAR, NULL, CONTENT:repro::VARCHAR, OWNER,
+               NULL, NULL, 0,
+               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD'), TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD'),
+               METADATA:product::VARCHAR
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+        WHERE TYPE = 'DEFECT'
+        ORDER BY METADATA:severity, METADATA:priority
     """)
     defects = []
     for r in cur.fetchall():
+        stage_to_status = {'Research':'OPEN','Narrated':'CLOSED','Building':'VERIFIED','Built':'VERIFIED','Initiate':'OPEN'}
         defects.append({
-            "id": r[0], "epic_id": r[1], "title": r[2], "description": r[3] or "",
-            "severity": r[4], "priority": r[5], "status": r[6],
-            "found_in": r[7], "fixed_in": r[8], "repro": r[9],
-            "reported_by": r[10], "related_story": r[11], "related_incident": r[12],
-            "reopen_count": r[13], "created": r[14], "updated": r[15], "product_id": r[16]
+            "id": r[0], "epic_id": r[1] or "", "title": r[2], "description": r[3] or "",
+            "severity": r[4] or "SEV3", "priority": r[5] or "P2", "status": stage_to_status.get(r[6], 'OPEN'),
+            "found_in": None, "fixed_in": r[7], "repro": r[9] or "",
+            "reported_by": r[10] or "", "related_story": r[11], "related_incident": r[12],
+            "reopen_count": r[13], "created": r[14] or "", "updated": r[15] or "", "product_id": r[16] or ""
         })
 
     cur.execute("""
-        SELECT INCIDENT_ID, PRODUCT_ID, SEVERITY, STATUS, TITLE, DESCRIPTION,
-               TO_VARCHAR(DETECTED_AT, 'YYYY-MM-DD HH24:MI'), 
-               TO_VARCHAR(MITIGATED_AT, 'YYYY-MM-DD HH24:MI'),
-               TO_VARCHAR(RESOLVED_AT, 'YYYY-MM-DD HH24:MI'),
-               TIME_TO_DETECT_MIN, TIME_TO_MITIGATE_MIN, TIME_TO_RESOLVE_MIN,
-               ROOT_CAUSE, PREVENTIVE_ACTION, DETECTED_BY
-        FROM GUPPI.PLATFORM.INCIDENTS ORDER BY DETECTED_AT DESC
+        SELECT ID, METADATA:product::VARCHAR, METADATA:severity::VARCHAR, STAGE, 
+               TITLE, CONTENT:description::VARCHAR,
+               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI'), NULL, NULL,
+               NULL, NULL, NULL,
+               CONTENT:root_cause::VARCHAR, CONTENT:preventive::VARCHAR, OWNER
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'INCIDENT' ORDER BY CREATED_AT DESC
     """)
     incidents = []
     for r in cur.fetchall():
+        stage_to_status = {'Research':'OPEN','Narrated':'CLOSED','Building':'RESOLVED','Built':'RESOLVED','Initiate':'OPEN'}
         incidents.append({
-            "id": r[0], "product_id": r[1], "severity": r[2], "status": r[3],
+            "id": r[0], "product_id": r[1] or "", "severity": r[2] or "SEV3", "status": stage_to_status.get(r[3], 'OPEN'),
             "title": r[4], "description": r[5] or "",
             "detected_at": r[6], "mitigated_at": r[7], "resolved_at": r[8],
             "ttd": r[9], "ttm": r[10], "ttr": r[11],
-            "root_cause": r[12], "preventive": r[13], "detected_by": r[14]
+            "root_cause": r[12] or "", "preventive": r[13] or "", "detected_by": r[14] or ""
         })
 
     cur.execute("""
-        SELECT AUDIT_ID, TARGET_NAME, TARGET_TYPE, 
-               TO_VARCHAR(AUDIT_DATE, 'YYYY-MM-DD HH24:MI'),
-               TRUST_SCORE, GRADE, C_SIGNALS, D_SIGNALS, TOTAL_CHECKS,
-               BUILDER_VOTE, TARS_VOTE, HUMAN_VOTE, STATUS
-        FROM GUPPI.PLATFORM.AUDIT_RUNS ORDER BY AUDIT_DATE DESC
+        SELECT ID, CONTENT:target::VARCHAR, CONTENT:target_type::VARCHAR, 
+               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI'),
+               CONTENT:score::FLOAT, CONTENT:grade::VARCHAR, 
+               CONTENT:c_signals::NUMBER, CONTENT:d_signals::NUMBER, CONTENT:total_checks::NUMBER,
+               CONTENT:builder_vote::VARCHAR, CONTENT:tars_vote::VARCHAR, CONTENT:human_vote::VARCHAR, 
+               METADATA:status::VARCHAR
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'AUDIT' ORDER BY CREATED_AT DESC
     """)
     audits = []
     for r in cur.fetchall():
         audits.append({
-            "id": r[0], "target": r[1], "type": r[2], "date": r[3],
-            "score": r[4], "grade": r[5], "c": r[6], "d": r[7], "checks": r[8],
-            "builder_vote": r[9], "tars_vote": r[10], "human_vote": r[11], "status": r[12]
+            "id": r[0], "target": r[1] or "", "type": r[2] or "", "date": r[3],
+            "score": r[4], "grade": r[5] or "", "c": r[6], "d": r[7], "checks": r[8],
+            "builder_vote": r[9] or "", "tars_vote": r[10] or "", "human_vote": r[11] or "", "status": r[12] or ""
         })
 
-    cur.execute("""
-        SELECT AUDIT_ID, CHECK_NAME, SIGNAL, WEIGHT, DESCRIPTION, EVIDENCE
-        FROM GUPPI.PLATFORM.AUDIT_FINDINGS
-        ORDER BY AUDIT_ID, SIGNAL DESC, WEIGHT DESC
-    """)
+    # No separate findings table in GUPPIWHEEL — findings are embedded in CONTENT
     findings_by_audit = {}
-    for r in cur.fetchall():
-        aid = r[0]
-        if aid not in findings_by_audit:
-            findings_by_audit[aid] = []
-        findings_by_audit[aid].append({
-            "check": r[1], "signal": r[2], "weight": r[3],
-            "desc": r[4] or "", "evidence": r[5] or ""
-        })
 
     for a in audits:
         a["findings"] = findings_by_audit.get(a["id"], [])
 
-    cur.execute("""
-        SELECT * FROM GUPPI.PLATFORM.QA_DASHBOARD
-    """)
-    qa_row = cur.fetchone()
     qa_dashboard = {}
-    if qa_row:
-        qa_dashboard = {
-            "gate_status": qa_row[0], "golden_total": qa_row[1],
-            "golden_passed": qa_row[2], "golden_failed": qa_row[3],
-            "golden_last_run": str(qa_row[4]) if qa_row[4] else None,
-            "canary_actions_24h": qa_row[5], "canary_passed": qa_row[6],
-            "canary_failed": qa_row[7], "regression_from_bond": qa_row[8],
-            "runs_7d": qa_row[9], "runs_open": qa_row[10], "runs_blocked": qa_row[11]
-        }
-
-    cur.execute("""
-        SELECT RUN_ID, RUN_TYPE, AGENT, TOTAL_TESTS, PASSED, FAILED, PASS_RATE, 
-               GATE_STATUS, TRIGGER_SOURCE, DURATION_MS, 
-               TO_VARCHAR(RUN_AT, 'YYYY-MM-DD HH24:MI')
-        FROM GUPPI.PLATFORM.QA_RUNS
-        ORDER BY RUN_AT DESC
-        LIMIT 25
-    """)
     qa_runs = []
-    for r in cur.fetchall():
-        qa_runs.append({
-            "id": r[0], "type": r[1], "agent": r[2], "total": r[3],
-            "passed": r[4], "failed": r[5], "rate": float(r[6]) if r[6] else 0,
-            "gate": r[7], "trigger": r[8], "duration": r[9], "run_at": r[10]
-        })
-
-    cur.execute("""
-        SELECT TEST_ID, DESCRIPTION, EDGE_CASE_TYPE, SEVERITY, LAST_RUN_RESULT, RUN_COUNT,
-               TO_VARCHAR(LAST_RUN_AT, 'YYYY-MM-DD HH24:MI')
-        FROM NCPDP_F6.PUBLIC.GOLDEN_TEST_CASES
-        WHERE ACTIVE = TRUE
-        ORDER BY SEVERITY DESC, TEST_ID
-    """)
     golden_tests = []
-    for r in cur.fetchall():
-        golden_tests.append({
-            "id": r[0], "desc": r[1], "type": r[2], "severity": r[3],
-            "result": r[4], "runs": r[5], "last_run": r[6]
-        })
 
     cur.execute("""
-        SELECT INITIATIVE_ID, TITLE, HYPOTHESIS, STATUS, PRIORITY,
-               MAX_CALLS, CALLS_USED,
-               TO_VARCHAR(SUBMITTED_AT, 'YYYY-MM-DD HH24:MI'),
-               TO_VARCHAR(COMPLETED_AT, 'YYYY-MM-DD HH24:MI'),
-               RESULT
-        FROM GUPPI.PLATFORM.INITIATIVES
-        ORDER BY SUBMITTED_AT DESC
+        SELECT ID, TITLE, CONTENT:hypothesis::VARCHAR, STAGE, METADATA:priority::VARCHAR,
+               METADATA:max_calls::NUMBER, METADATA:calls_used::NUMBER,
+               TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI'),
+               TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD HH24:MI'),
+               CONTENT:result::VARCHAR
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+        WHERE TYPE = 'INITIATIVE'
+        ORDER BY CREATED_AT DESC
     """)
     initiatives = []
     for r in cur.fetchall():
+        stage_to_status = {'Initiate':'QUEUED','Research':'RUNNING','Building':'COMPLETE','Built':'COMPLETE','Narrated':'COMPLETE'}
         initiatives.append({
-            "id": r[0], "title": r[1], "hypothesis": r[2] or "", "status": r[3],
-            "priority": r[4], "max_calls": r[5], "calls_used": r[6],
-            "submitted": r[7], "completed": r[8], "result": r[9] or ""
+            "id": r[0], "title": r[1], "hypothesis": r[2] or "", "status": stage_to_status.get(r[3], 'QUEUED'),
+            "priority": r[4] or "P2", "max_calls": r[5] or 10, "calls_used": r[6] or 0,
+            "submitted": r[7] or "", "completed": r[8] or "", "result": r[9] or ""
         })
 
     cur.execute("""
@@ -209,19 +166,45 @@ def query_guppi():
         })
 
     cur.execute("""
-        SELECT NARRATIVE_ID, TITLE, NARRATIVE_TYPE, DESCRIPTION, PRODUCT_ID, TAGS, VERSION,
-               FILE_PATH, TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD')
-        FROM NARRATIVE_REGISTRY.PUBLIC.NARRATIVES
+        SELECT ID, TITLE, CONTENT:narrative_type::VARCHAR, CONTENT:description::VARCHAR, 
+               METADATA:product::VARCHAR, TAGS, METADATA:version::VARCHAR,
+               CONTENT:file_path::VARCHAR, TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD')
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+        WHERE TYPE = 'NARRATIVE'
         ORDER BY CREATED_AT DESC
     """)
     narratives = []
     for r in cur.fetchall():
         tags = r[5] if r[5] else []
         narratives.append({
-            "id": r[0], "title": r[1], "type": r[2], "description": r[3] or "",
+            "id": r[0], "title": r[1], "type": r[2] or "", "description": r[3] or "",
             "product_id": r[4] or "", "tags": tags, "version": r[6] or "1.0.0",
             "file_path": r[7] or "", "created": r[8] or ""
         })
+
+    flywheel = []
+    try:
+        cur.execute("""
+            SELECT ID, TYPE, STAGE, PARENT_ID, TITLE, TAGS, OWNER,
+                   TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI'),
+                   METADATA,
+                   TO_VARCHAR(COALESCE(UPDATED_AT, CREATED_AT), 'YYYY-MM-DD HH24:MI')
+            FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+            ORDER BY COALESCE(UPDATED_AT, CREATED_AT) DESC
+        """)
+        for r in cur.fetchall():
+            tags = r[5] if r[5] else []
+            meta = r[8] if r[8] else {}
+            flywheel.append({
+                "id": r[0], "type": r[1], "stage": r[2], "parent_id": r[3] or "",
+                "title": r[4] or "", "tags": tags, "owner": r[6] or "",
+                "created": r[7] or "", "metadata": meta, "updated": r[9] or ""
+            })
+    except Exception as e:
+        print(f"  WARNING: GUPPIWHEEL flywheel query failed ({e}). Flywheel tab will be empty.")
+
+    cur.execute("SELECT CURRENT_USER()")
+    current_user = cur.fetchone()[0]
 
     cur.close()
     conn.close()
@@ -233,6 +216,7 @@ def query_guppi():
 
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "current_user": current_user,
         "products": products,
         "epics": epics,
         "stories": stories,
@@ -243,6 +227,7 @@ def query_guppi():
         "skills": skills,
         "bond": bond_entries,
         "narratives": narratives,
+        "flywheel": flywheel,
         "qa": {"dashboard": qa_dashboard, "runs": qa_runs, "golden_tests": golden_tests},
         "summary": {
             "total": len(stories), "done": done, "in_progress": in_prog,
@@ -264,7 +249,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='4' y='4' width='10' height='10' rx='2' fill='%2314B8A6'/><rect x='18' y='4' width='10' height='10' rx='2' fill='%2314B8A6' opacity='0.7'/><rect x='4' y='18' width='10' height='10' rx='2' fill='%2314B8A6' opacity='0.7'/><rect x='18' y='18' width='10' height='10' rx='2' fill='%2314B8A6' opacity='0.4'/></svg>">
-<title>GUPPI — Platform Command Center</title>
+<title>GUPPI — Enterprise AI Command Center</title>
 <style>
 :root{--bg:#0a0a12;--surface:#12131e;--border:#1e2030;--text:#e2e8f0;--muted:#8888a0;--blue:#29B5E8;--green:#14B8A6;--amber:#F59E0B;--red:#FBBF24;--purple:#A78BFA}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -314,12 +299,43 @@ h1 span{color:var(--blue)}
 .score{font-size:2rem;font-weight:800}
 .score.EXCELLENT{color:var(--green)}.score.GOOD{color:var(--blue)}.score.FAIR{color:var(--amber)}.score.FAIL{color:var(--red)}
 .hidden{display:none}
+.global-tab{padding:0.5rem 1.2rem;border-radius:8px;border:2px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:0.85rem;font-weight:700;transition:all 0.2s;letter-spacing:0.3px}
+.global-tab.active{background:linear-gradient(135deg,var(--blue),#1a8fb8);color:white;border-color:var(--blue);box-shadow:0 2px 12px rgba(41,181,232,0.3)}
+.global-tab:hover:not(.active){border-color:var(--blue);color:var(--text)}
+.fw-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:0.8rem;display:grid;grid-template-columns:auto 1fr auto;gap:1rem;align-items:center}
+.fw-type{font-size:0.6rem;text-transform:uppercase;letter-spacing:0.8px;padding:0.2rem 0.5rem;border-radius:4px;font-weight:700}
+.fw-type-initiative,.fw-type-INITIATIVE{background:rgba(245,158,11,0.15);color:var(--amber)}
+.fw-type-research,.fw-type-RESEARCH{background:rgba(41,181,232,0.15);color:var(--blue)}
+.fw-type-story,.fw-type-STORY,.fw-type-EPIC{background:rgba(136,136,160,0.15);color:var(--muted)}
+.fw-type-app,.fw-type-model,.fw-type-APP,.fw-type-MODEL{background:rgba(20,184,166,0.15);color:var(--green)}
+.fw-type-hero{background:rgba(167,139,250,0.15);color:var(--purple)}
+.fw-type-narrative,.fw-type-NARRATIVE{background:rgba(236,72,153,0.15);color:#ec4899}
+.fw-type-skill,.fw-type-SKILL{background:rgba(99,102,241,0.15);color:#6366f1}
+.fw-type-audit,.fw-type-AUDIT,.fw-type-DEFECT,.fw-type-INCIDENT{background:rgba(239,68,68,0.15);color:#ef4444}
+.fw-type-memory,.fw-type-OPS_EVENT{background:rgba(167,139,250,0.1);color:var(--purple)}
+.fw-stage{font-size:0.6rem;padding:0.15rem 0.4rem;border-radius:3px;font-weight:600}
+.fw-stage-Initiate{background:rgba(245,158,11,0.1);color:var(--amber)}
+.fw-stage-Research{background:rgba(41,181,232,0.1);color:var(--blue)}
+.fw-stage-Building{background:rgba(20,184,166,0.1);color:var(--green)}
+.fw-stage-Built{background:rgba(167,139,250,0.1);color:var(--purple)}
+.fw-stage-Narrated{background:rgba(236,72,153,0.1);color:#ec4899}
+.fw-lineage{border-left:3px solid var(--border);padding-left:1.5rem;margin-left:1rem}
+.fw-lineage-node{position:relative;padding:0.8rem 1rem;margin-bottom:0.5rem;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.fw-lineage-node::before{content:'';position:absolute;left:-1.6rem;top:50%;width:1.3rem;height:2px;background:var(--border)}
+.fw-pipeline-stage{text-align:center;padding:1rem;border-radius:8px;background:var(--surface);border:1px solid var(--border)}
+.fw-pipeline-arrow{color:var(--blue);font-size:1.5rem;text-align:center;padding:0.5rem}
 </style>
 </head>
 <body>
+<div style="display:flex;gap:0.5rem;margin-bottom:1.2rem">
+<button class="global-tab active" id="gt-command" onclick="switchGlobal('command')">Command Center</button>
+<button class="global-tab" id="gt-flywheel" onclick="switchGlobal('flywheel')">Flywheel</button>
+</div>
+
+<div id="global-command">
 <div class="header-row">
 <div class="header-left">
-<h1>GUPPI — <span>Platform Command Center</span></h1>
+<h1>GUPPI — <span>Enterprise AI Command Center</span></h1>
 <div class="meta">Generated: <span id="gen-time"></span> | Headless: all mutations via CoCo | This view is read-only</div>
 </div>
 <div class="kpis" id="kpis"></div>
@@ -341,12 +357,278 @@ h1 span{color:var(--blue)}
 <div id="filters" class="filters"></div>
 <div id="content"></div>
 <div id="page-controls" class="page-controls hidden"></div>
+</div>
+
+<div id="global-flywheel" style="display:none">
+<div class="header-row">
+<div class="header-left">
+<h1>GUPPIWHEEL — <span>Value Creation Engine</span></h1>
+</div>
+<div class="kpis" id="fw-kpis"></div>
+</div>
+<div class="tabs" id="fw-tabs">
+<div class="tabs" id="fw-tabs" style="display:none">
+<button class="tab active" onclick="showFwTab('all')">All Artifacts</button>
+<button class="tab" onclick="showFwTab('lineage')">Lineage View</button>
+<button class="tab" onclick="showFwTab('pipeline')">Pipeline</button>
+</div>
+<div id="fw-filters" class="filters"></div>
+<div id="fw-content"></div>
+</div>
 
 <script id="guppi-data" type="application/json">__DATA__</script>
 <script>
 var D=JSON.parse(document.getElementById('guppi-data').textContent);
 var currentTab=localStorage.getItem('guppi-tab')||'backlog',currentPage=0,pageSize=50;
 var filters={product:'ALL',status:'ALL',search:''};
+var currentGlobal=localStorage.getItem('guppi-global')||'command';
+var fwTab='all',fwTypeFilter='ALL',fwScopeFilter='ALL',fwStageFilter='ALL',fwSearch='',fwOpenInits={};
+var currentUser=D.current_user||'USER';
+
+function switchGlobal(view){
+currentGlobal=view;
+localStorage.setItem('guppi-global',view);
+document.getElementById('global-command').style.display=view==='command'?'block':'none';
+document.getElementById('global-flywheel').style.display=view==='flywheel'?'block':'none';
+document.getElementById('gt-command').classList.toggle('active',view==='command');
+document.getElementById('gt-flywheel').classList.toggle('active',view==='flywheel');
+if(view==='flywheel') renderFlywheel();
+}
+
+function showFwTab(t){
+fwTab=t;
+document.querySelectorAll('#fw-tabs .tab').forEach(function(b){b.classList.remove('active')});
+event.target.classList.add('active');
+renderFlywheel();
+}
+
+function renderFlywheel(){
+var fw=D.flywheel||[];
+var fwKpis=document.getElementById('fw-kpis');
+var stageOrder=['Initiate','Research','Building','Built','Narrated'];
+var stages={};
+stageOrder.forEach(function(s){stages[s]=0;});
+fw.forEach(function(a){if(a.type==='INITIATIVE')stages[a.stage]=(stages[a.stage]||0)+1;});
+fwKpis.innerHTML=stageOrder.map(function(s){return '<div class="kpi"><div class="val" style="font-size:1.2rem">'+(stages[s]||0)+'</div><div class="lbl">'+s+'</div></div>';}).join('');
+renderInitiativeList(fw);
+}
+
+function renderInitiativeList(fw){
+var inits=fw.filter(function(a){return a.type==='INITIATIVE';});
+var stageOrder=['Initiate','Research','Building','Built','Narrated'];
+// Default sort: most recently updated first
+inits.sort(function(a,b){
+  var au=a.updated||a.created||'';
+  var bu=b.updated||b.created||'';
+  return bu.localeCompare(au);
+});
+
+var fil=document.getElementById('fw-filters');
+fil.innerHTML='<select onchange="fwStageFilter=this.value;renderFlywheel()"><option value="ALL">All Stages</option>'+stageOrder.map(function(s){return '<option value="'+s+'"'+(fwStageFilter===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select>'+
+'<select onchange="fwScopeFilter=this.value;renderFlywheel()" style="margin-left:0.5rem"><option value="ALL">All Initiatives</option><option value="MY_OWNED"'+(fwScopeFilter==='MY_OWNED'?' selected':'')+'>My Initiatives</option></select>'+
+'<input type="text" placeholder="Search title..." oninput="fwSearch=this.value;renderInitiativeList(D.flywheel||[])" style="margin-left:0.5rem;padding:0.4rem 0.6rem;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px" value="'+(fwSearch||'').replace(/"/g,'&quot;')+'">';
+
+var filtered=inits.filter(function(i){
+  if(fwStageFilter!=='ALL' && i.stage!==fwStageFilter) return false;
+  if(fwScopeFilter==='MY_OWNED' && i.owner!==currentUser) return false;
+  if(fwSearch && (i.title||'').toLowerCase().indexOf(fwSearch.toLowerCase())===-1) return false;
+  return true;
+});
+
+// Build child index by parent_id
+var byParent={};
+fw.forEach(function(a){if(a.parent_id){if(!byParent[a.parent_id])byParent[a.parent_id]=[];byParent[a.parent_id].push(a);}});
+
+var h='<div style="margin-bottom:0.8rem;color:var(--muted);font-size:0.75rem">'+filtered.length+' initiatives</div>';
+filtered.forEach(function(i){
+  var children=getDescendants(i.id, byParent);
+  var counts={};
+  children.forEach(function(c){counts[c.type]=(counts[c.type]||0)+1;});
+  var typeOrder=['RESEARCH','STORY','EPIC','APP','NARRATIVE','DEFECT','INCIDENT','AUDIT'];
+  var pills=typeOrder.filter(function(t){return counts[t];}).map(function(t){
+    return '<span class="fw-type fw-type-'+t+'" style="font-size:0.65rem">'+counts[t]+' '+t+'</span>';
+  }).join(' ');
+  var isOpen=fwOpenInits[i.id]?true:false;
+  h+='<div class="fw-init-row" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:0.6rem;overflow:hidden">';
+  h+='<div data-init-id="'+i.id+'" onclick="toggleInit(this.getAttribute(&quot;data-init-id&quot;))" style="padding:0.9rem 1rem;cursor:pointer;display:grid;grid-template-columns:auto 1fr auto auto;gap:0.8rem;align-items:center">';
+  h+='<span style="font-family:monospace;color:var(--muted);font-size:0.75rem;width:100px">'+i.id+'</span>';
+  h+='<div><div style="font-weight:600">'+escapeHtml(i.title)+'</div>';
+  h+='<div style="font-size:0.7rem;color:var(--muted);margin-top:0.2rem">Owner: '+(i.owner||'—')+(pills?' &nbsp;|&nbsp; '+pills:'')+'</div></div>';
+  h+='<span class="fw-stage fw-stage-'+i.stage+'">'+i.stage+'</span>';
+  h+='<span style="color:var(--muted);font-size:0.9rem">'+(isOpen?'▼':'▶')+'</span>';
+  h+='</div>';
+  if(isOpen){
+    h+='<div style="padding:0 1rem 1rem 1rem;border-top:1px solid var(--border)">';
+    // Hypothesis / summary
+    var hyp=i.metadata&&(i.metadata.hypothesis)||'';
+    var meta=i.metadata||{};
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:0.8rem 0">';
+    h+='<div><div style="font-size:0.7rem;color:var(--muted);text-transform:uppercase">Created</div><div>'+(i.created||'—')+'</div></div>';
+    h+='<div><div style="font-size:0.7rem;color:var(--muted);text-transform:uppercase">Priority</div><div>'+(meta.priority||'—')+'</div></div>';
+    h+='</div>';
+    if(hyp){h+='<div style="margin:0.8rem 0"><div style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;margin-bottom:0.3rem">Hypothesis</div><div style="background:var(--bg);padding:0.6rem;border-radius:6px;font-size:0.85rem">'+escapeHtml(hyp)+'</div></div>';}
+    // Children grouped by type
+    if(children.length){
+      h+='<div style="margin-top:0.8rem"><div style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;margin-bottom:0.4rem">Linked Artifacts ('+children.length+')</div>';
+      typeOrder.forEach(function(t){
+        var group=children.filter(function(c){return c.type===t;});
+        if(!group.length) return;
+        h+='<div style="margin:0.4rem 0"><div style="font-size:0.65rem;color:var(--blue);font-weight:600;margin-bottom:0.2rem">'+t+' ('+group.length+')</div>';
+        group.forEach(function(c){
+          var hasLaunch = c.metadata && c.metadata.launch && c.metadata.launch.app_type;
+          var launchType = hasLaunch ? c.metadata.launch.app_type : null;
+          var launchBadge = '';
+          if(launchType==='static_html') launchBadge='<span style="font-size:0.55rem;color:var(--green);background:rgba(20,184,166,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">HTML</span>';
+          else if(launchType==='cortex_agent') launchBadge='<span style="font-size:0.55rem;color:var(--purple);background:rgba(167,139,250,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">AGENT</span>';
+          else if(launchType==='spcs_service') launchBadge='<span style="font-size:0.55rem;color:var(--blue);background:rgba(41,181,232,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">SPCS</span>';
+          else if(launchType==='streamlit'||launchType==='streamlit_url') launchBadge='<span style="font-size:0.55rem;color:var(--blue);background:rgba(41,181,232,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">STREAMLIT</span>';
+          else if(launchType==='native_app') launchBadge='<span style="font-size:0.55rem;color:var(--amber);background:rgba(245,158,11,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">NATIVE APP</span>';
+          else if(launchType==='external_url') launchBadge='<span style="font-size:0.55rem;color:var(--muted);background:rgba(136,136,160,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">URL</span>';
+          else if(launchType==='pdf') launchBadge='<span style="font-size:0.55rem;color:var(--red);background:rgba(239,68,68,0.1);padding:0.1rem 0.3rem;border-radius:3px;margin-right:0.3rem">PDF</span>';
+          var openBtn = hasLaunch ? '<button onclick="openArtifact(this.getAttribute(&quot;data-aid&quot;))" data-aid="'+c.id+'" style="font-size:0.65rem;padding:0.15rem 0.5rem;background:var(--blue);color:white;border:none;border-radius:4px;cursor:pointer;margin-left:0.4rem">Open</button>' : '';
+          h+='<div style="padding:0.3rem 0.6rem;margin:0.15rem 0;background:var(--bg);border-radius:5px;font-size:0.8rem;display:grid;grid-template-columns:auto 1fr auto auto;gap:0.6rem;align-items:center">';
+          h+='<span style="font-family:monospace;color:var(--muted);font-size:0.7rem;min-width:90px">'+c.id+'</span>';
+          h+='<span>'+launchBadge+escapeHtml(c.title||'')+'</span>';
+          h+='<span class="fw-stage fw-stage-'+c.stage+'" style="font-size:0.6rem">'+c.stage+'</span>';
+          h+=openBtn;
+          h+='</div>';
+        });
+        h+='</div>';
+      });
+      h+='</div>';
+    } else {
+      h+='<div style="color:var(--muted);font-style:italic;font-size:0.8rem">No linked artifacts yet</div>';
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+});
+document.getElementById('fw-content').innerHTML=h||'<div style="padding:2rem;color:var(--muted)">No initiatives match filters</div>';
+}
+
+function getDescendants(rootId, byParent){
+  var out=[];
+  var stack=[rootId];
+  var seen={};
+  while(stack.length){
+    var pid=stack.pop();
+    if(seen[pid]) continue;
+    seen[pid]=true;
+    var kids=byParent[pid]||[];
+    kids.forEach(function(k){out.push(k);stack.push(k.id);});
+  }
+  return out;
+}
+
+function toggleInit(id){
+  fwOpenInits[id]=!fwOpenInits[id];
+  renderFlywheel();
+}
+
+function openArtifact(id){
+  fetch('/api/launch/'+encodeURIComponent(id))
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.error){alert('Could not open: '+d.error);return;}
+      if(d.url){window.open(d.url,'_blank');return;}
+      if(d.identifier){
+        var msg='Open in Snowsight:\\n\\n'+d.identifier+'\\n\\n(Copied to clipboard)';
+        if(navigator.clipboard) navigator.clipboard.writeText(d.identifier);
+        if(d.snowsight_url) window.open(d.snowsight_url,'_blank');
+        else alert(msg);
+        return;
+      }
+      alert('No launch target on this artifact.');
+    })
+    .catch(function(e){alert('Launch error: '+e.message);});
+}
+
+function escapeHtmlFw(s){return (s===null||s===undefined?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function renderFwAll(fw){
+var el=document.getElementById('fw-filters');
+el.innerHTML='<select onchange="fwTypeFilter=this.value;renderFlywheel()"><option value="ALL">All Types</option><option value="INITIATIVE"'+(fwTypeFilter==='INITIATIVE'?' selected':'')+'>Initiatives</option><option value="RESEARCH"'+(fwTypeFilter==='RESEARCH'?' selected':'')+'>Research</option><option value="STORY"'+(fwTypeFilter==='STORY'?' selected':'')+'>Stories</option><option value="EPIC"'+(fwTypeFilter==='EPIC'?' selected':'')+'>Epics</option><option value="APP"'+(fwTypeFilter==='APP'?' selected':'')+'>Apps/Models</option><option value="NARRATIVE"'+(fwTypeFilter==='NARRATIVE'?' selected':'')+'>Narratives</option><option value="SKILL"'+(fwTypeFilter==='SKILL'?' selected':'')+'>Skills</option><option value="AUDIT"'+(fwTypeFilter==='AUDIT'?' selected':'')+'>Audits</option><option value="DEFECT"'+(fwTypeFilter==='DEFECT'?' selected':'')+'>Defects</option><option value="INCIDENT"'+(fwTypeFilter==='INCIDENT'?' selected':'')+'>Incidents</option></select><select onchange="fwScopeFilter=this.value;renderFlywheel()" style="margin-left:0.5rem"><option value="ALL">All Artifacts</option><option value="MY_TAGGED"'+(fwScopeFilter==='MY_TAGGED'?' selected':'')+'>My Tags</option><option value="MY_OWNED"'+(fwScopeFilter==='MY_OWNED'?' selected':'')+'>My Owned</option></select>';
+var items=fw.filter(function(a){
+if(fwTypeFilter!=='ALL' && (a.type||'').toUpperCase()!==fwTypeFilter) return false;
+if(fwScopeFilter==='MY_TAGGED'){var tu=a.metadata&&a.metadata.tagged_users;if(!tu) return false;var found=false;if(Array.isArray(tu)){tu.forEach(function(u){if(u===currentUser)found=true;});}return found;}
+if(fwScopeFilter==='MY_OWNED') return a.owner===currentUser;
+return true;
+});
+var h='<div style="margin-bottom:0.8rem;color:var(--muted);font-size:0.75rem">Showing '+Math.min(items.length,200)+' of '+items.length+' artifacts</div>';
+items.slice(0,200).forEach(function(a){
+h+='<div class="fw-card">';
+h+='<div><span class="fw-type fw-type-'+a.type+'">'+a.type+'</span></div>';
+h+='<div><div style="font-weight:700;margin-bottom:0.2rem">'+a.title+'</div>';
+h+='<div style="font-size:0.7rem;color:var(--muted)">Owner: '+a.owner;
+if(a.parent_id) h+=' | Parent: <span style="font-family:monospace;color:var(--blue)">'+a.parent_id+'</span>';
+if(a.metadata&&a.metadata.tagged_users&&a.metadata.tagged_users.length) h+=' | <span style="color:var(--purple)">@'+a.metadata.tagged_users.join(' @')+'</span>';
+h+='</div>';
+if(a.tags&&a.tags.length) h+='<div style="margin-top:0.3rem">'+a.tags.slice(0,6).map(function(t){return '<span style="display:inline-block;padding:0.1rem 0.35rem;margin:0.1rem;border-radius:3px;font-size:0.6rem;background:rgba(41,181,232,0.08);color:var(--blue)">'+t+'</span>';}).join('')+'</div>';
+h+='</div>';
+h+='<div style="text-align:right"><span class="fw-stage fw-stage-'+a.stage+'">'+a.stage+'</span><div style="font-size:0.6rem;color:var(--muted);margin-top:0.3rem">'+a.created+'</div></div>';
+h+='</div>';
+});
+document.getElementById('fw-content').innerHTML=h||'<div style="padding:2rem;color:var(--muted)">No artifacts in flywheel</div>';
+}
+
+function renderFwLineage(fw){
+document.getElementById('fw-filters').innerHTML='';
+var roots=fw.filter(function(a){return !a.parent_id;});
+var h='<div style="margin-bottom:1rem;font-size:0.8rem;color:var(--muted)">Showing lineage chains from root initiatives</div>';
+roots.forEach(function(root){
+h+='<div style="margin-bottom:1.5rem;padding:1rem;background:var(--surface);border:1px solid var(--border);border-radius:10px">';
+h+='<div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.8rem"><span class="fw-type fw-type-'+root.type+'">'+root.type+'</span><span style="font-weight:700;font-size:1rem">'+root.title+'</span><span class="fw-stage fw-stage-'+root.stage+'">'+root.stage+'</span></div>';
+var children=fw.filter(function(a){return a.parent_id===root.id;});
+if(children.length){
+h+='<div class="fw-lineage">';
+children.forEach(function(c){
+h+='<div class="fw-lineage-node"><div style="display:flex;align-items:center;gap:0.5rem"><span class="fw-type fw-type-'+c.type+'">'+c.type+'</span><span style="font-weight:600;font-size:0.85rem">'+c.title+'</span><span class="fw-stage fw-stage-'+c.stage+'">'+c.stage+'</span></div><div style="font-size:0.65rem;color:var(--muted);margin-top:0.3rem">'+c.owner+' | '+c.created+'</div></div>';
+var grandchildren=fw.filter(function(a){return a.parent_id===c.id;});
+if(grandchildren.length){
+h+='<div class="fw-lineage" style="margin-left:1.5rem">';
+grandchildren.forEach(function(gc){
+h+='<div class="fw-lineage-node"><span class="fw-type fw-type-'+gc.type+'">'+gc.type+'</span> '+gc.title+'</div>';
+});
+h+='</div>';
+}
+});
+h+='</div>';
+} else {
+h+='<div style="font-size:0.75rem;color:var(--muted);padding:0.5rem 0">No child artifacts yet</div>';
+}
+h+='</div>';
+});
+if(!roots.length) h='<div style="padding:2rem;color:var(--muted)">No root artifacts found</div>';
+document.getElementById('fw-content').innerHTML=h;
+}
+
+function renderFwPipeline(fw){
+document.getElementById('fw-filters').innerHTML='';
+var stages=['spark','active','built','proven','told','archived'];
+var stageLabels={'spark':'💡 Spark','active':'🔬 Active','built':'🏗️ Built','proven':'✅ Proven','told':'📖 Told','archived':'📦 Archived'};
+var byStage={};
+stages.forEach(function(s){byStage[s]=fw.filter(function(a){return a.stage===s;});});
+var h='<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:0.5rem;margin-bottom:1.5rem">';
+stages.forEach(function(s){
+h+='<div class="fw-pipeline-stage"><div style="font-size:1.5rem;font-weight:800;color:var(--blue)">'+byStage[s].length+'</div><div style="font-size:0.7rem;color:var(--muted)">'+stageLabels[s]+'</div></div>';
+});
+h+='</div>';
+h+='<div style="display:flex;justify-content:center;margin-bottom:1.5rem;gap:0;align-items:center">';
+stages.forEach(function(s,i){
+h+='<div style="padding:0.3rem 0.7rem;border-radius:4px;font-size:0.7rem;font-weight:600" class="fw-stage fw-stage-'+s+'">'+s+'</div>';
+if(i<stages.length-1) h+='<div style="color:var(--blue);padding:0 0.5rem">→</div>';
+});
+h+='</div>';
+stages.forEach(function(s){
+if(!byStage[s].length) return;
+h+='<div style="margin-bottom:1rem"><div style="font-size:0.75rem;font-weight:700;color:var(--muted);margin-bottom:0.5rem;text-transform:uppercase">'+stageLabels[s]+' ('+byStage[s].length+')</div>';
+byStage[s].forEach(function(a){
+h+='<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.8rem;border-bottom:1px solid var(--border);font-size:0.8rem"><span class="fw-type fw-type-'+a.type+'">'+a.type+'</span><span>'+a.title+'</span><span style="margin-left:auto;font-size:0.65rem;color:var(--muted)">'+a.owner+'</span></div>';
+});
+h+='</div>';
+});
+document.getElementById('fw-content').innerHTML=h;
+}
 
 function refreshData(){
 var btn=document.getElementById('refresh-btn');
@@ -708,7 +990,8 @@ document.getElementById('page-controls').classList.add('hidden');
 var narrFilter='ALL';
 
 renderKPIs();
-document.querySelectorAll('.tab').forEach(function(b){b.classList.remove('active');if(b.getAttribute('onclick')&&b.getAttribute('onclick').indexOf(currentTab)!==-1)b.classList.add('active');});
+document.querySelectorAll('#tabs .tab').forEach(function(b){b.classList.remove('active');if(b.getAttribute('onclick')&&b.getAttribute('onclick').indexOf(currentTab)!==-1)b.classList.add('active');});
+switchGlobal(currentGlobal);
 render();
 </script>
 </body>
@@ -744,11 +1027,32 @@ if __name__ == "__main__":
             data = query_guppi()
             return jsonify(data)
 
+        @fapp.route("/api/launch/<artifact_id>")
+        def api_launch(artifact_id):
+            import snowflake.connector as sc
+            conn = sc.connect(connection_name=os.getenv("SNOWFLAKE_CONNECTION_NAME") or "HealthcareDemos")
+            try:
+                cur = conn.cursor()
+                cur.execute("CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(%s, %s)", (artifact_id, 3600))
+                row = cur.fetchone()
+                if row is None:
+                    return jsonify({"error": "no result"}), 500
+                # Result is VARIANT — Snowflake connector returns it as str
+                import json as _json
+                payload = row[0]
+                if isinstance(payload, str):
+                    try:
+                        payload = _json.loads(payload)
+                    except Exception:
+                        pass
+                return jsonify(payload)
+            finally:
+                cur.close()
+                conn.close()
+
         port = 8888
         print(f"GUPPI Viewer — Serving on http://localhost:{port}")
         print("  Refresh button in the UI will pull live data from Snowflake.")
-        import webbrowser
-        webbrowser.open(f"http://localhost:{port}")
         fapp.run(host="0.0.0.0", port=port, debug=False)
     else:
         print("GUPPI Viewer — Rendering...")

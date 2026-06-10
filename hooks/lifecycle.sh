@@ -35,7 +35,7 @@ case "$EVENT" in
     cat <<EOF
 {
   "decision": "allow",
-  "systemMessage": "[coco-platform] Session resumed. Phase: ${PHASE} | Active skill: ${SKILL} | State file: ${STATE_FILE}"
+  "systemMessage": "[guppi-platform] Session resumed. Phase: ${PHASE} | Active skill: ${SKILL} | State file: ${STATE_FILE}"
 }
 EOF
     ;;
@@ -60,7 +60,7 @@ EOF
         cat <<EOF
 {
   "decision": "block",
-  "reason": "[coco-platform] Write blocked: skill '${SKILL}' requires reading reference docs first. Use Read tool on the skill's references/ directory."
+  "reason": "[guppi-platform] Write blocked: skill '${SKILL}' requires reading reference docs first. Use Read tool on the skill's references/ directory."
 }
 EOF
         exit 2
@@ -88,13 +88,99 @@ EOF
     PHASE=$(echo "$STATE" | jq -r '.phase // "ad-hoc"')
     SKILL=$(echo "$STATE" | jq -r '.active_skill // "none"')
     REFS=$(echo "$STATE" | jq -r '.refs_read | length')
+    INIT=$(echo "$STATE" | jq -r '.current_initiative // "none"')
     
     cat <<EOF
 {
   "decision": "allow",
-  "systemMessage": "[coco-platform] Phase: ${PHASE} | Skill: ${SKILL} | Refs read: ${REFS}"
+  "systemMessage": "[guppi-platform] Phase: ${PHASE} | Skill: ${SKILL} | Refs read: ${REFS} | Wheel: ${INIT}"
 }
 EOF
+    ;;
+
+  post-create-plan)
+    # Scope guard: only nag when working in guppi-platform repo
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [[ "$REPO_ROOT" != *guppi-platform* ]]; then
+      echo '{"decision": "allow"}'
+      exit 0
+    fi
+
+    # When create_plan tool fires, capture the plan name and offer to publish to wheel.
+    # Stdin has tool_input + tool_response from the create_plan call.
+    INPUT=$(cat)
+    PLAN_NAME=$(echo "$INPUT" | jq -r '.tool_input.name // empty' 2>/dev/null)
+    
+    if [ -z "$PLAN_NAME" ]; then
+      echo '{"decision": "allow"}'
+      exit 0
+    fi
+    
+    # Find the just-written plan file
+    PLAN_DIR="${HOME}/.snowflake/cortex/plans"
+    PLAN_FILE="${PLAN_DIR}/${PLAN_NAME}.plan.md"
+    if [ ! -f "$PLAN_FILE" ]; then
+      # Could also be in playground workspace
+      PLAN_FILE="${HOME}/.snowflake/cortex/playground/workspace/.snowflake/cortex/plans/${PLAN_NAME}.plan.md"
+    fi
+    
+    STATE=$(read_state)
+    CURRENT_INIT=$(echo "$STATE" | jq -r '.current_initiative // empty')
+    
+    if [ -f "$PLAN_FILE" ] && [ -n "$CURRENT_INIT" ]; then
+      cat <<EOF
+{
+  "decision": "allow",
+  "systemMessage": "[guppi-platform] Plan '${PLAN_NAME}' created. Reminder: publish as NARRATIVE under ${CURRENT_INIT} via 'snow sql -q \"CALL GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(...)\"' or use /wheel publish-plan."
+}
+EOF
+    elif [ -f "$PLAN_FILE" ]; then
+      cat <<EOF
+{
+  "decision": "allow",
+  "systemMessage": "[guppi-platform] Plan '${PLAN_NAME}' created. No active initiative set. RULE-013 reminder: publish this plan as a NARRATIVE under an INITIATIVE in the wheel. Use '/wheel start' to open one, or '/wheel publish-plan' to manually narrative."
+}
+EOF
+    else
+      echo '{"decision": "allow"}'
+    fi
+    ;;
+
+  post-switch-mode)
+    # Scope guard: only nag when working in guppi-platform repo
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [[ "$REPO_ROOT" != *guppi-platform* ]]; then
+      echo '{"decision": "allow"}'
+      exit 0
+    fi
+
+    # When switch_mode fires, especially plan -> agent, remind about wheel discipline.
+    INPUT=$(cat)
+    TARGET=$(echo "$INPUT" | jq -r '.tool_input.target_mode_id // empty' 2>/dev/null)
+    
+    if [ "$TARGET" != "agent" ]; then
+      echo '{"decision": "allow"}'
+      exit 0
+    fi
+    
+    STATE=$(read_state)
+    CURRENT_INIT=$(echo "$STATE" | jq -r '.current_initiative // empty')
+    
+    if [ -z "$CURRENT_INIT" ]; then
+      cat <<EOF
+{
+  "decision": "allow",
+  "systemMessage": "[guppi-platform] Switched to agent mode without an active initiative. RULE-013/014 reminder: every meaningful work session opens with SUBMIT_INITIATIVE. Use /wheel start to open one before substantial changes."
+}
+EOF
+    else
+      cat <<EOF
+{
+  "decision": "allow",
+  "systemMessage": "[guppi-platform] Executing under ${CURRENT_INIT}. Output should land as artifacts in the wheel."
+}
+EOF
+    fi
     ;;
 
   *)
