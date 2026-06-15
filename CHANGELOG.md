@@ -2,6 +2,17 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.4.1] — 2026-06-15
+
+### Security — RBAC lockdown, secondary-table pass (follow-on to 3.4.0)
+
+Completed the contributor grant audit started in 3.4.0. Revoked direct DML on the remaining system/log tables; kept the contributor-curatable reference tables.
+
+- **Revoked from CONTRIBUTOR**: `ID_CONVENTIONS` (sequence counter — written only by the OWNER procs), `PLUGIN_VERSION` (system/admin), `INITIATIVE_STEPS` (Rocky/agent execution log, OWNER-written), `GUPPI_TOUCH_WATCH` (orphan, unwritten by any code path).
+- **Kept for CONTRIBUTOR**: `PRODUCTS` (product registry — contributors curate; now added to the seed so it perpetuates), `ECOSYSTEM.TAXONOMY` (reference data), `VIOLATIONS` + `ARTIFACT_LAUNCHES` (proc-written), Bond `MEMORY_STORE`, stage R/W.
+- **Seed**: `engine/01_schema.sql` adds `GRANT INSERT, UPDATE ON PRODUCTS` and a comment documenting which tables are contributor-curatable vs system/procedure-owned.
+- Net: the only tables a contributor can write directly are the two reference registries (PRODUCTS, TAXONOMY). Everything else is procedure-mediated or admin-only, per RULE-028.
+
 ## [3.4.0] — 2026-06-15
 
 ### Security — RBAC lockdown (STO-RBAC-LOCKDOWN, RULE-028)
