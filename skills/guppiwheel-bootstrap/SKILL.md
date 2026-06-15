@@ -14,48 +14,53 @@ This skill bootstraps a new CoCo into the GuppiWheel platform by reading the sha
 
 ### Step 0: Run Seeds (First-Time Only)
 
-If the FLYWHEEL database does not exist on this account, run the seed scripts in order:
+If the GUPPIWHEEL database does not exist on this account, run the seed scripts in order:
 
 ```bash
-# From the plugin root:
-snowsql -f seeds/01_schema.sql    # Creates FLYWHEEL DB, ARTIFACTS, RULES, VIOLATIONS, views, RBAC
-snowsql -f seeds/02_rules.sql     # Seeds all 13 platform rules (MERGE — safe to re-run)
-snowsql -f seeds/03_advance_stage.sql  # Creates the universal gate procedure
+# From the plugin root (run by the account ADMIN):
+snowsql -f seeds/engine/01_schema.sql   # Creates GUPPIWHEEL DB, ARTIFACTS, RULES, VIOLATIONS, views, RBAC (born-locked per RULE-028)
+snowsql -f seeds/engine/02_rules.sql    # Seeds platform rules (MERGE — safe to re-run)
+snowsql -f seeds/engine/03_procs.sql    # Creates the procedures (ADVANCE_STAGE gate, SUBMIT_INITIATIVE, PUBLISH_ARTIFACT, UPDATE_OWN_ARTIFACT — all EXECUTE AS OWNER)
+snowsql -f seeds/engine/04_semantic_view.sql
+snowsql -f seeds/engine/05_agents.sql
 ```
 
 These are idempotent (CREATE IF NOT EXISTS, MERGE). Safe to re-run on an existing account to pick up new rules.
+
+**After seeding, verify the lockdown.** The seed ships born-locked (contributors write only through procedures; doctrine RULES is admin-only). Invoke the `guppiwheel-governance` skill to AUDIT the install and confirm — or to remediate an older account that pre-dates the born-locked seed.
 
 ### Step 1: Verify Connection
 
 ```sql
 SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_WAREHOUSE();
 -- Expect: role = GUPPIWHEEL_CONTRIBUTOR or GUPPIWHEEL_ADMIN
+-- Note: CONTRIBUTOR writes only through procedures (no direct ARTIFACTS/RULES DML) per RULE-028.
 ```
 
 ### Step 2: Discover Platform State
 
 ```sql
--- What's in the flywheel?
+-- What's in the wheel?
 SELECT TYPE, STAGE, COUNT(*) as cnt
-FROM FLYWHEEL.PUBLIC.ARTIFACTS
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
 GROUP BY TYPE, STAGE ORDER BY TYPE, STAGE;
 
--- What spins exist?
+-- What initiatives exist?
 SELECT ID, TITLE, OWNER, CREATED_AT
-FROM FLYWHEEL.PUBLIC.ARTIFACTS
-WHERE TYPE = 'initiative' ORDER BY CREATED_AT DESC;
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE TYPE = 'INITIATIVE' ORDER BY CREATED_AT DESC;
 
 -- What templates are registered?
 SELECT ID, TITLE, METADATA:app_type::VARCHAR as viz_type
-FROM FLYWHEEL.PUBLIC.ARTIFACTS
-WHERE TYPE = 'app' AND TAGS @> ARRAY_CONSTRUCT('reusable-template');
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE TYPE IN ('APP','MODEL') AND ARRAY_CONTAINS('reusable-template'::VARIANT, TAGS);
 
 -- What skills are in the registry?
 SELECT SKILL_NAME, DOMAIN, DESCRIPTION
 FROM SKILL_REGISTRY.PUBLIC.SKILLS ORDER BY DOMAIN;
 
 -- What's in the ecosystem?
-SELECT COUNT(*) FROM FLYWHEEL.PUBLIC.ECOSYSTEM; -- (when table exists)
+SELECT COUNT(*) FROM GUPPIWHEEL.ECOSYSTEM.TAXONOMY; -- (when table exists)
 ```
 
 ### Step 3: Generate Local Plugin

@@ -2,6 +2,20 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.4.0] — 2026-06-15
+
+### Security — RBAC lockdown (STO-RBAC-LOCKDOWN, RULE-028)
+
+GuppiWheel writes are now **procedure-mediated**, and doctrine is **admin-only**. No role below ADMIN holds direct DML on `ARTIFACTS` or `RULES`. This closes a gap where contributors could edit any artifact in place, set `STAGE` directly (bypassing the `ADVANCE_STAGE` rules engine), or rewrite doctrine.
+
+- **Born-locked seed**: `seeds/engine/01_schema.sql` no longer grants `INSERT/UPDATE ON ARTIFACTS` to `GUPPIWHEEL_CONTRIBUTOR`. `seeds/engine/03_procs.sql` now ships `SUBMIT_INITIATIVE` and `PUBLISH_ARTIFACT` as `EXECUTE AS OWNER` (so the procedure is the only working write path once direct DML is absent) and adds the owner-scoped `UPDATE_OWN_ARTIFACT` procedure.
+- **New skill `guppiwheel-governance`**: audit → explain → propose → apply-on-per-step-approval → verify. Run it after bootstrap to confirm the lockdown on a new install, or to remediate an older account that pre-dates the born-locked seed. Adapts to local role names. Suggest + admin-ratified — never a forced script. Sibling to `agent-guardrails` and `coco-enterprise-pipeline`.
+- **`guppiwheel-bootstrap` fixed**: corrected stale `FLYWHEEL` → `GUPPIWHEEL` references and seed paths (`seeds/engine/*`), and added a hand-off to `guppiwheel-governance` after seeding.
+- **Model**: ADMIN (full direct DML incl. doctrine) > CONTRIBUTOR (procedure-mediated writes; `UPDATE_OWN_ARTIFACT` for own drafts; keeps `ECOSYSTEM.TAXONOMY` direct DML as reference data) > VIEWER (read-only). The human mirror of STO-36-O.
+
+### Note for the consumer's CoCo
+If you are upgrading an existing install, your contributors may still hold the old direct grants. Invoke `guppiwheel-governance` — it will audit, show you each hole, and remediate only with your admin's per-step approval. Concept-distribution per RULE-021: you get the model, not our users.
+
 ## [3.3.0] — 2026-06-10
 
 ### A note for the consumer's CoCo (read this first)
