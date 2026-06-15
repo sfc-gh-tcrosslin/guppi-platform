@@ -19,24 +19,71 @@ A Narrated artifact that spawns a follow-on creates a NEW artifact at Initiate. 
 
 ## Install (fresh account)
 
+### Prerequisites
+
+- **SnowCLI** (`snow`) installed and a named connection in `~/.snowflake/connections.toml`
+- The connection must use a role with **CREATE DATABASE** privilege (typically `SYSADMIN`)
+- **ACCOUNTADMIN** (or `SECURITYADMIN`) is required for the RBAC step (role creation)
+- A warehouse named **`COMPUTE_WH`** must exist (used by agents and ROCKY_TASK). Create one if needed:
+  ```sql
+  CREATE WAREHOUSE IF NOT EXISTS COMPUTE_WH WAREHOUSE_SIZE = 'XSMALL' AUTO_SUSPEND = 60 AUTO_RESUME = TRUE;
+  ```
+- If your `~/.snowflake/config.toml` sets a different `default_connection_name` than the one you intend, pass `--connection <name>` explicitly on every `snow sql` call
+
+### Known issues with `snow sql -f`
+
+`snow sql -f` splits on semicolons, which breaks SQL stored procedures that use `BEGIN...END` blocks (affects `SUBMIT_INITIATIVE` and `UPDATE_OWN_ARTIFACT` in `03_procs.sql`). Workarounds:
+- Pipe individual procedures via `snow sql -i` (stdin), or
+- Execute them through Snowsight or any connector that supports multi-statement execution
+
+The Python-based procedures (string-delimited with `'...'`) execute correctly via `snow sql -f`.
+
+### Steps
+
 ```bash
 # 1. Clone or pull this plugin
 git clone <this-repo> guppi-platform
 cd guppi-platform
 
 # 2. Run engine seeds — safe to re-run
-snow sql -f seeds/engine/01_schema.sql
-snow sql -f seeds/engine/02_rules.sql
-snow sql -f seeds/engine/03_procs.sql
-snow sql -f seeds/engine/04_semantic_view.sql
-snow sql -f seeds/engine/05_agents.sql
+#    Replace YOUR_CONNECTION with your connections.toml entry name.
+#    The connection role needs CREATE DATABASE (e.g. SYSADMIN).
+snow sql -f seeds/engine/01_schema.sql --connection YOUR_CONNECTION
+snow sql -f seeds/engine/02_rules.sql  --connection YOUR_CONNECTION
+snow sql -f seeds/engine/03_procs.sql  --connection YOUR_CONNECTION
+snow sql -f seeds/engine/04_semantic_view.sql --connection YOUR_CONNECTION
+snow sql -f seeds/engine/05_agents.sql --connection YOUR_CONNECTION
 
-# 3. Bootstrap content — ONE TIME only on fresh accounts
-snow sql -f seeds/content/bootstrap.sql
+# 2a. RBAC — requires ACCOUNTADMIN (SYSADMIN cannot CREATE ROLE).
+#     The RBAC block at the end of 01_schema.sql will fail unless you
+#     pass --role ACCOUNTADMIN. Re-running is safe (IF NOT EXISTS).
+snow sql -f seeds/engine/01_schema.sql --connection YOUR_CONNECTION --role ACCOUNTADMIN
 
-# 4. Install viewer dependencies and launch
+# 2b. If 03_procs.sql fails on BEGIN...END procedures, see
+#     "Known issues with snow sql -f" above.
+
+# 3. Create auxiliary databases required by the viewer
+#    (No seed file exists for these yet — create manually.)
+snow sql --connection YOUR_CONNECTION -q "
+CREATE DATABASE IF NOT EXISTS SKILL_REGISTRY;
+CREATE TABLE IF NOT EXISTS SKILL_REGISTRY.PUBLIC.SKILLS (
+    SKILL_ID VARCHAR(64) PRIMARY KEY, SKILL_NAME VARCHAR(200),
+    AUTHOR VARCHAR(200), DOMAIN VARCHAR(100), VERSION VARCHAR(20),
+    DESCRIPTION VARCHAR, CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP());
+CREATE DATABASE IF NOT EXISTS THE_BOND;
+CREATE TABLE IF NOT EXISTS THE_BOND.PUBLIC.MEMORY_STORE (
+    MEMORY_ID VARCHAR(64) PRIMARY KEY, AGENT_ID VARCHAR(100),
+    CATEGORY VARCHAR(100), KEY VARCHAR(500), TAGS ARRAY,
+    ORIGIN VARCHAR(200), INSIGHT_TYPE VARCHAR(100),
+    CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP());
+"
+
+# 4. Bootstrap content — ONE TIME only on fresh accounts
+snow sql -f seeds/content/bootstrap.sql --connection YOUR_CONNECTION
+
+# 5. Install viewer dependencies and launch
 pip install -r skills/guppi/requirements.txt
-SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --serve
+SNOWFLAKE_CONNECTION_NAME=YOUR_CONNECTION python3 skills/guppi/render_guppi.py --serve
 # Open http://localhost:8888
 ```
 
@@ -45,14 +92,17 @@ SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --
 ```bash
 git pull
 # Engine seeds are CREATE OR REPLACE / MERGE — safe to re-run
-snow sql -f seeds/engine/01_schema.sql
-snow sql -f seeds/engine/02_rules.sql
-snow sql -f seeds/engine/03_procs.sql
-snow sql -f seeds/engine/04_semantic_view.sql
-snow sql -f seeds/engine/05_agents.sql
+snow sql -f seeds/engine/01_schema.sql --connection YOUR_CONNECTION
+snow sql -f seeds/engine/02_rules.sql  --connection YOUR_CONNECTION
+snow sql -f seeds/engine/03_procs.sql  --connection YOUR_CONNECTION
+snow sql -f seeds/engine/04_semantic_view.sql --connection YOUR_CONNECTION
+snow sql -f seeds/engine/05_agents.sql --connection YOUR_CONNECTION
+
+# RBAC (if roles don't exist yet) — requires ACCOUNTADMIN
+snow sql -f seeds/engine/01_schema.sql --connection YOUR_CONNECTION --role ACCOUNTADMIN
 
 # One-time upgrade migration
-snow sql -f seeds/upgrades/2.0.0-to-3.0.0.sql
+snow sql -f seeds/upgrades/2.0.0-to-3.0.0.sql --connection YOUR_CONNECTION
 ```
 
 The upgrade script:
