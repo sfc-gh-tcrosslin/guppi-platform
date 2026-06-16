@@ -76,14 +76,14 @@ USING (
      'Story cannot advance to Building without at least one APP/MODEL/DASHBOARD artifact linked'),
 
     ('STG-003', 'stage_transition', 'APP', 'Building', 'Built',
-     'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = ''AUDIT'' AND CONTENT:target::VARCHAR = (SELECT TITLE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :artifact_id) AND CONTENT:score::FLOAT >= 0.85)',
+     'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.TARS_AUDITS_V ar JOIN GUPPIWHEEL.PUBLIC.ARTIFACTS a ON ar.target_name = a.TITLE WHERE a.ID = :artifact_id AND ar.trust_score >= 0.85)',
      'block', TRUE,
      'App cannot advance to Built without a TARS audit scoring >= 0.85'),
 
     ('STG-004', 'stage_transition', 'ALL', NULL, 'Narrated',
-     'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS n WHERE n.PARENT_ID = :artifact_id AND n.TYPE = ''NARRATIVE'')',
+     'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.TARS_AUDITS_V ar JOIN GUPPIWHEEL.PUBLIC.ARTIFACTS a ON ar.target_name = a.TITLE WHERE a.ID = :artifact_id AND ar.human_vote IS NOT NULL)',
      'block', TRUE,
-     'Nothing advances to Narrated without a NARRATIVE child artifact'),
+     'Nothing advances to Narrated without a human affirmation vote on its TARS audit'),
 
     ('STG-005', 'stage_transition', 'OUTCOME', 'TRACKED', 'RESOLVED', '-- Enforcement deferred until INIT-37 OUTCOME type is Built; warn-level for now', 'warn', TRUE, 'OUTCOME artifacts use a distinct 4-stage lifecycle: ASPIRATIONAL (target stated before work) -> SELECTED (decision-maker commits) -> TRACKED (pointer wired to live data: snowflake_path / app_metric / external_url) -> RESOLVED (measured against the world). An OUTCOME should not reach RESOLVED without its pointer resolving to real data or an explicit human sign-off. This is the standalone lifecycle introduced in INIT-37; the standard artifact stages (Initiate->Research->Building->Built->Narrated) do NOT apply to OUTCOME.'),
 
@@ -112,6 +112,11 @@ USING (
      'NOT EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS au WHERE au.TYPE = ''AUDIT'' AND au.CONTENT:target::VARCHAR = (SELECT TITLE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :artifact_id) AND au.CONTENT:score::FLOAT < 0.70)',
      'block', FALSE,
      'TARS score below 0.70 blocks all stage advancement'),
+
+    ('QAL-002', 'quality', 'ALL', NULL, NULL,
+     'NOT EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.TARS_FINDINGS_V af JOIN GUPPIWHEEL.PUBLIC.TARS_AUDITS_V ar ON af.audit_id = ar.audit_id JOIN GUPPIWHEEL.PUBLIC.ARTIFACTS a ON ar.target_name = a.TITLE WHERE a.ID = :artifact_id AND af.signal = ''D'' AND af.disposition IS NULL)',
+     'block', FALSE,
+     'Unresolved TARS D-signal (defection) blocks stage advancement until dispositioned'),
 
     -- ==========================================================================
     -- TIMING

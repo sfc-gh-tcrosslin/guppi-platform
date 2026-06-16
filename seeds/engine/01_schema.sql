@@ -187,6 +187,46 @@ SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, 
        CONTENT:grade::VARCHAR AS GRADE
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'AUDIT';
 
+-- TARS_AUDITS_V / TARS_FINDINGS_V — TARS trust audits live IN-WHEEL as AUDIT artifacts
+-- (STO-SUBSTRATE-9: one place; the artifact IS the TARS output). No AUDIT_RUNS/AUDIT_FINDINGS tables.
+-- A TARS AUDIT artifact's CONTENT carries: target, target_type, score, grade, c_signals, d_signals,
+-- total_checks, builder_vote, tars_vote, human_vote, human_conditions, status, findings[] (array of
+-- {check_name,tier,signal,weight,description,evidence,model_used,action_required,disposition}).
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.TARS_AUDITS_V AS
+SELECT
+  a.ID                               AS audit_id,
+  a.CONTENT:target::STRING           AS target_name,
+  a.CONTENT:target_type::STRING      AS target_type,
+  a.CONTENT:score::FLOAT             AS trust_score,
+  a.CONTENT:grade::STRING            AS grade,
+  a.CONTENT:c_signals::INT           AS c_signals,
+  a.CONTENT:d_signals::INT           AS d_signals,
+  a.CONTENT:total_checks::INT        AS total_checks,
+  a.CONTENT:builder_vote::STRING     AS builder_vote,
+  a.CONTENT:tars_vote::STRING        AS tars_vote,
+  a.CONTENT:human_vote::STRING       AS human_vote,
+  a.CONTENT:human_conditions::STRING AS human_conditions,
+  COALESCE(a.CONTENT:status::STRING, 'COMPLETE') AS status,
+  a.CREATED_AT                       AS audit_date
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.TYPE = 'AUDIT' AND a.CONTENT:score IS NOT NULL AND a.SUPERSEDED_BY IS NULL;
+
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.TARS_FINDINGS_V AS
+SELECT
+  a.ID                               AS audit_id,
+  f.value:check_name::STRING         AS check_name,
+  f.value:tier::INT                  AS tier,
+  f.value:signal::STRING             AS signal,
+  f.value:weight::FLOAT              AS weight,
+  f.value:description::STRING        AS description,
+  f.value:evidence::STRING           AS evidence,
+  f.value:model_used::STRING         AS model_used,
+  f.value:action_required::STRING    AS action_required,
+  f.value:disposition::STRING        AS disposition
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a,
+     LATERAL FLATTEN(input => a.CONTENT:findings, outer => FALSE) f
+WHERE a.TYPE = 'AUDIT' AND a.CONTENT:score IS NOT NULL AND a.SUPERSEDED_BY IS NULL;
+
 -- DUPLICATE_ID_SCREAM_V — RULE-029 tripwire. Should ALWAYS be empty. Watched by the data-hygiene agent.
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.DUPLICATE_ID_SCREAM_V AS
 SELECT ID, COUNT(*) AS row_count, LISTAGG(DISTINCT TYPE, ',') AS types,

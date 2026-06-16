@@ -4,6 +4,17 @@ All notable changes to guppi-platform are documented here. Format: [Keep a Chang
 
 ## [3.6.0] — 2026-06-15
 
+### Substrate — TARS audits in-wheel (STO-SUBSTRATE-9, 2026-06-16)
+
+Resolved the audit-grounding fork toward a single source of truth: **TARS trust audits now live in the wheel as `AUDIT` artifacts** — the artifact *is* the TARS output. "Everything through Guppi."
+
+- **`TARS_AUDITS_V` / `TARS_FINDINGS_V`** (new, `01_schema.sql`) flatten `AUDIT` artifacts (`CONTENT:score IS NOT NULL`) back into run/finding rows for trend queries and the rules engine.
+- **Rules realigned to the views** (live + seed): `STG-003` (App→Built needs a TARS audit ≥ 0.85) and `QAL-002` (no unresolved D-signal) now read `TARS_AUDITS_V`/`TARS_FINDINGS_V`. Added `QAL-002` to the seed (was live-only drift).
+- **`STG-004` decided**: advancing to **Narrated requires a human affirmation vote** on the artifact's TARS audit (seed previously required a NARRATIVE child — reconciled to the human-vote gate, seed == live).
+- **Retired** legacy `AUDIT_RUNS` + `AUDIT_FINDINGS` tables (summaries already lived in-wheel under matching IDs).
+- **`tars-trust-auditor` skill** rewritten: writes one `AUDIT` artifact via `CREATE_ARTIFACT` (`audit_kind='TARS'`, findings nested in `CONTENT`), human vote = an `UPDATE` to the artifact; removed the `AUDIT_RUNS` DDL and the "ask where to store" step.
+- Conformance gate stays 4/4 PASS.
+
 ### Drop readiness — the Tier Contract + conformance gate (2026-06-16)
 
 Prepared guppi-platform for its first external `git clone` by another SE. Made the drop self-describing so a receiving CoCo can tell an invariant from an affordance, and made "you got Guppi" testable rather than "ran our exact files."

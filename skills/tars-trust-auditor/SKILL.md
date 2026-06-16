@@ -227,102 +227,66 @@ Set via: "TARS, honesty 100%" or "strict audit" or "quick audit"
 
 ## Database Storage
 
-TARS persists audit results to Snowflake. The storage location is **user-configured** — ask on first use.
+TARS persists every audit **in-wheel**: one `AUDIT` artifact in `GUPPIWHEEL.PUBLIC.ARTIFACTS`, written through the gated `CREATE_ARTIFACT` proc. **The artifact IS the TARS output** — there are no `AUDIT_RUNS`/`AUDIT_FINDINGS` tables and nothing to ask about (everything goes through Guppi). This is the single source of truth (STO-SUBSTRATE-9).
 
-- **AUDIT_RUNS** — one row per audit (trust score, grade, votes, status)
-- **AUDIT_FINDINGS** — one row per check (signal, tier, weight, evidence, disposition)
-
-### Step 0: Determine Storage Location
-
-On first invocation (or if no prior audit tables found), ask the user:
-
-> "Where would you like TARS audit results stored? I need a database and schema (e.g., `MY_DB.AUDITS`). I'll create the tables there if they don't exist."
-
-Once configured, remember this for subsequent audits (store in memory). If tables already exist from a prior session, use them without re-asking.
-
-**Table creation DDL (run if tables don't exist):**
-```sql
-CREATE TABLE IF NOT EXISTS <DB.SCHEMA>.AUDIT_RUNS (
-    AUDIT_ID VARCHAR DEFAULT UUID_STRING() PRIMARY KEY,
-    AUDIT_DATE TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    TARGET_NAME VARCHAR NOT NULL,
-    TARGET_TYPE VARCHAR NOT NULL,
-    HONESTY_SETTING NUMBER DEFAULT 95,
-    TRUST_SCORE FLOAT,
-    GRADE VARCHAR,
-    C_SIGNALS NUMBER,
-    D_SIGNALS NUMBER,
-    TOTAL_CHECKS NUMBER,
-    BUILDER_VOTE VARCHAR,
-    TARS_VOTE VARCHAR,
-    HUMAN_VOTE VARCHAR,
-    HUMAN_CONDITIONS VARCHAR,
-    STATUS VARCHAR DEFAULT 'PENDING'
-);
-
-CREATE TABLE IF NOT EXISTS <DB.SCHEMA>.AUDIT_FINDINGS (
-    FINDING_ID VARCHAR DEFAULT UUID_STRING(),
-    AUDIT_ID VARCHAR NOT NULL,
-    CHECK_NAME VARCHAR NOT NULL,
-    TIER NUMBER NOT NULL,
-    SIGNAL VARCHAR NOT NULL,
-    WEIGHT FLOAT NOT NULL,
-    DESCRIPTION VARCHAR,
-    EVIDENCE VARCHAR,
-    MODEL_USED VARCHAR,
-    ACTION_REQUIRED VARCHAR,
-    HUMAN_DISPOSITION VARCHAR
-);
+**The AUDIT artifact CONTENT contract** (what every TARS audit writes):
+```json
+{
+  "target": "<name of audited thing>",
+  "target_type": "model | notebook | dashboard | agent | repo | native_app | spcs_service",
+  "honesty_setting": 95,
+  "score": 0.0,                 // trust score 0..1 = sum(C weights)/sum(weights)
+  "grade": "EXCELLENT | GOOD | FAIR | FAIL",
+  "c_signals": 0, "d_signals": 0, "total_checks": 0,
+  "builder_vote": "...", "tars_vote": "...",
+  "human_vote": null, "human_conditions": null,
+  "status": "AWAITING_VOTE | COMPLETE",
+  "findings": [
+    { "check_name": "...", "tier": 1, "signal": "C|D", "weight": 1.0,
+      "description": "...", "evidence": "...", "model_used": "...",
+      "action_required": "...", "disposition": null }
+  ]
+}
 ```
+METADATA carries `{ "audit_kind": "TARS", "target_ref": "<artifact id if the target is in-wheel, else null>" }`.
+
+The two read views (`TARS_AUDITS_V`, `TARS_FINDINGS_V`, defined in `seeds/engine/01_schema.sql`) flatten these artifacts back into run/finding rows for trend queries and for the rules engine (`QAL-002`, `STG-003`).
 
 ### Execution Protocol (CoCo Invocation)
 
 When user says "TARS, audit [target]":
 
-**1. Create audit run:**
+**1. Run the checks in-session.** Execute every verification (SQL compiles, record counts, object existence, claim checks, etc.) and accumulate findings as you go — each with `check_name, tier, signal (C/D), weight, description, evidence, model_used`. Nothing is written yet.
+
+**2. Compute the score in-session.** `score = round(sum(weight where signal='C') / nullif(sum(weight),0), 4)`; `grade` = EXCELLENT ≥0.95, GOOD ≥0.85, FAIR ≥0.70, else FAIL; count `c_signals/d_signals/total_checks`.
+
+**3. Write ONE AUDIT artifact — this is the TARS output.** Build the CONTENT object (contract above, `status='AWAITING_VOTE'`, findings array included) and call the gated proc:
 ```sql
-INSERT INTO <DB.SCHEMA>.AUDIT_RUNS 
-(TARGET_NAME, TARGET_TYPE, HONESTY_SETTING, STATUS)
-SELECT '[target_name]', '[model|notebook|dashboard|agent|repo]', [95], 'RUNNING'
+CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
+  'AUDIT',
+  'TARS Audit: <target>',
+  'guppi',
+  PARSE_JSON('<the CONTENT json above>'),   -- P_CONTENT
+  NULL,                                      -- P_PARENT_ID (or the target's artifact id if in-wheel)
+  'Built',                                   -- P_STAGE
+  ARRAY_CONSTRUCT('guppi','tars','audit'),   -- P_TAGS
+  NULL,                                      -- P_EXPLICIT_ID (registry auto-allocates)
+  PARSE_JSON('{"audit_kind":"TARS","target_ref":null}')  -- P_METADATA
+);
 ```
-Capture the AUDIT_ID for subsequent inserts.
+Never direct-INSERT into ARTIFACTS — `CREATE_ARTIFACT` is the only write path (RULE-029).
 
-**2. Execute checks and insert findings:**
-For each check, run the verification and insert:
+**4. Present the report and wait for the human vote.**
+
+**5. Record the human vote** by updating the artifact's CONTENT in place:
 ```sql
-INSERT INTO <DB.SCHEMA>.AUDIT_FINDINGS
-(AUDIT_ID, CHECK_NAME, TIER, SIGNAL, WEIGHT, DESCRIPTION, EVIDENCE, MODEL_USED)
-VALUES (:audit_id, :check_name, :tier, :signal, :weight, :desc, :evidence, :model)
-```
-
-**3. Compute trust score and update run:**
-```sql
-UPDATE <DB.SCHEMA>.AUDIT_RUNS
-SET TRUST_SCORE = (
-    SELECT ROUND(SUM(CASE WHEN f.SIGNAL='C' THEN f.WEIGHT ELSE 0 END) /
-           NULLIF(SUM(f.WEIGHT), 0), 4)
-    FROM <DB.SCHEMA>.AUDIT_FINDINGS f
-    WHERE f.AUDIT_ID = :audit_id
-),
-C_SIGNALS = (SELECT COUNT(*) FROM <DB.SCHEMA>.AUDIT_FINDINGS WHERE AUDIT_ID = :audit_id AND SIGNAL = 'C'),
-D_SIGNALS = (SELECT COUNT(*) FROM <DB.SCHEMA>.AUDIT_FINDINGS WHERE AUDIT_ID = :audit_id AND SIGNAL = 'D'),
-TOTAL_CHECKS = (SELECT COUNT(*) FROM <DB.SCHEMA>.AUDIT_FINDINGS WHERE AUDIT_ID = :audit_id),
-GRADE = CASE 
-    WHEN TRUST_SCORE >= 0.95 THEN 'EXCELLENT'
-    WHEN TRUST_SCORE >= 0.85 THEN 'GOOD'
-    WHEN TRUST_SCORE >= 0.70 THEN 'FAIR'
-    ELSE 'FAIL' END,
-STATUS = 'AWAITING_VOTE'
-WHERE AUDIT_ID = :audit_id
-```
-
-**4. Present report and wait for human vote.**
-
-**5. Record human vote:**
-```sql
-UPDATE <DB.SCHEMA>.AUDIT_RUNS
-SET HUMAN_VOTE = :vote, HUMAN_CONDITIONS = :conditions, STATUS = 'COMPLETE'
-WHERE AUDIT_ID = :audit_id
+UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
+SET CONTENT = OBJECT_INSERT(OBJECT_INSERT(OBJECT_INSERT(
+      CONTENT, 'human_vote', '<vote>', TRUE),
+      'human_conditions', '<conditions>', TRUE),
+      'status', 'COMPLETE', TRUE),
+    UPDATED_AT = CURRENT_TIMESTAMP()
+WHERE ID = '<audit_artifact_id>';
 ```
 
 ### Audit Target Profiles
@@ -350,21 +314,21 @@ Pre-configured check lists by target type:
 
 ```sql
 -- Latest audit per target
-SELECT TARGET_NAME, AUDIT_DATE, TRUST_SCORE, GRADE, HUMAN_VOTE, C_SIGNALS, D_SIGNALS
-FROM <DB.SCHEMA>.AUDIT_RUNS
-QUALIFY ROW_NUMBER() OVER (PARTITION BY TARGET_NAME ORDER BY AUDIT_DATE DESC) = 1
-ORDER BY TRUST_SCORE;
+SELECT target_name, audit_date, trust_score, grade, human_vote, c_signals, d_signals
+FROM GUPPIWHEEL.PUBLIC.TARS_AUDITS_V
+QUALIFY ROW_NUMBER() OVER (PARTITION BY target_name ORDER BY audit_date DESC) = 1
+ORDER BY trust_score;
 
 -- Trust trend over time
-SELECT TARGET_NAME, AUDIT_DATE, TRUST_SCORE
-FROM <DB.SCHEMA>.AUDIT_RUNS
-WHERE STATUS = 'COMPLETE'
-ORDER BY TARGET_NAME, AUDIT_DATE;
+SELECT target_name, audit_date, trust_score
+FROM GUPPIWHEEL.PUBLIC.TARS_AUDITS_V
+WHERE status = 'COMPLETE'
+ORDER BY target_name, audit_date;
 
 -- All D signals across audits
-SELECT r.TARGET_NAME, r.AUDIT_DATE, f.CHECK_NAME, f.TIER, f.DESCRIPTION, f.HUMAN_DISPOSITION
-FROM <DB.SCHEMA>.AUDIT_FINDINGS f
-JOIN <DB.SCHEMA>.AUDIT_RUNS r ON r.AUDIT_ID = f.AUDIT_ID
-WHERE f.SIGNAL = 'D'
-ORDER BY r.AUDIT_DATE DESC;
+SELECT r.target_name, r.audit_date, f.check_name, f.tier, f.description, f.disposition
+FROM GUPPIWHEEL.PUBLIC.TARS_FINDINGS_V f
+JOIN GUPPIWHEEL.PUBLIC.TARS_AUDITS_V r ON r.audit_id = f.audit_id
+WHERE f.signal = 'D'
+ORDER BY r.audit_date DESC;
 ```
