@@ -14,6 +14,7 @@ Resolved the audit-grounding fork toward a single source of truth: **TARS trust 
 - **Retired** legacy `AUDIT_RUNS` + `AUDIT_FINDINGS` tables (summaries already lived in-wheel under matching IDs).
 - **`tars-trust-auditor` skill** rewritten: writes one `AUDIT` artifact via `CREATE_ARTIFACT` (`audit_kind='TARS'`, findings nested in `CONTENT`), human vote = an `UPDATE` to the artifact; removed the `AUDIT_RUNS` DDL and the "ask where to store" step.
 - Conformance gate stays 4/4 PASS.
+- **Schema drift fixed**: widened `ARTIFACTS.ID`/`PARENT_ID`/`SUPERSEDED_BY` (and `VIOLATIONS.ARTIFACT_ID`) to `VARCHAR(64)` (live was 36 — descriptive IDs overflowed). Added the missing `SUPERSEDED_BY` column to the seed `ARTIFACTS` table — without it a **fresh install would fail** creating the serving/TARS views that reference it. Idempotent self-heal `ALTER`s added so existing installs repair on re-run; fresh installs are born correct.
 
 ### Drop readiness — the Tier Contract + conformance gate (2026-06-16)
 
