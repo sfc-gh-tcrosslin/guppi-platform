@@ -1,10 +1,32 @@
 -- =============================================================================
--- guppi-platform v3.0.0 — Engine Seed 05: Agents + Task
--- CREATE OR REPLACE for both agents. Task uses CREATE OR REPLACE then RESUME.
+-- guppi-platform — Engine Seed 05: Agents + Task
+-- TIER 1 (DEFAULT): agents, their instructions, and compute wiring are yours to
+--   re-author. See COCO.md.
+-- We do NOT dictate a warehouse. Agents bind to the installer's ACTIVE warehouse
+-- (CURRENT_WAREHOUSE()); ROCKY_TASK is serverless (Snowflake-managed compute).
+--
+-- PREREQ: a warehouse must be active in this session before running this file:
+--   USE WAREHOUSE <your_wh>;
+-- The guard below fails loud if none is set.
 -- =============================================================================
 
+-- --- Guard: require an active warehouse, then capture it -----------------------
+EXECUTE IMMEDIATE $$
+DECLARE
+  no_wh EXCEPTION (-20036,
+    'No active warehouse. Run  USE WAREHOUSE <your_wh>;  then re-run 05_agents.sql');
+BEGIN
+  IF ((SELECT CURRENT_WAREHOUSE()) IS NULL) THEN
+    RAISE no_wh;
+  END IF;
+  RETURN 'warehouse OK';
+END;
+$$;
+
+SET wh = (SELECT CURRENT_WAREHOUSE());
+
 -- =============================================================================
--- ROCKY_AGENT — autonomous research, web search only
+-- ROCKY_AGENT — autonomous research, web search only (no warehouse-bound tools)
 -- =============================================================================
 CREATE OR REPLACE AGENT GUPPIWHEEL.PUBLIC.ROCKY_AGENT
 FROM SPECIFICATION $$
@@ -40,9 +62,9 @@ $$;
 
 -- =============================================================================
 -- GUPPIWHEEL_COWORK_AGENT — user-facing dispatch agent
+-- Spec carries __WH__ placeholders; substituted with the active warehouse below.
 -- =============================================================================
-CREATE OR REPLACE AGENT GUPPIWHEEL.PUBLIC.GUPPIWHEEL_COWORK_AGENT
-FROM SPECIFICATION $$
+SET cowork_spec = $$
 models:
   orchestration: auto
 orchestration:
@@ -124,27 +146,36 @@ tool_resources:
   submit_initiative:
     identifier: GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE
     type: procedure
-    execution_environment: { type: warehouse, warehouse: COMPUTE_WH }
+    execution_environment: { type: warehouse, warehouse: __WH__ }
   advance_stage:
     identifier: GUPPIWHEEL.PUBLIC.ADVANCE_STAGE
     type: procedure
-    execution_environment: { type: warehouse, warehouse: COMPUTE_WH }
+    execution_environment: { type: warehouse, warehouse: __WH__ }
   publish_artifact:
     identifier: GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT
     type: procedure
-    execution_environment: { type: warehouse, warehouse: COMPUTE_WH }
+    execution_environment: { type: warehouse, warehouse: __WH__ }
   flywheel_query:
     semantic_view: GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
-    execution_environment: { type: warehouse, warehouse: COMPUTE_WH }
+    execution_environment: { type: warehouse, warehouse: __WH__ }
 $$;
 
+-- Build + run the CREATE with the active warehouse substituted in.
+-- (CHR(36)||CHR(36) = $$, the FROM SPECIFICATION delimiter, assembled here so the
+--  spec body — which contains apostrophes — never sits inside a single-quoted literal.)
+SET cowork_stmt = 'CREATE OR REPLACE AGENT GUPPIWHEEL.PUBLIC.GUPPIWHEEL_COWORK_AGENT FROM SPECIFICATION '
+  || CHR(36) || CHR(36) || REPLACE($cowork_spec, '__WH__', $wh) || CHR(36) || CHR(36);
+EXECUTE IMMEDIATE $cowork_stmt;
+
 -- =============================================================================
--- ROCKY_TASK — 5-min cycle
+-- ROCKY_TASK — 5-min cycle, SERVERLESS (no WAREHOUSE param = Snowflake-managed)
 -- =============================================================================
+-- Serverless tasks require EXECUTE MANAGED TASK on the owning role (idempotent).
+GRANT EXECUTE MANAGED TASK ON ACCOUNT TO ROLE GUPPIWHEEL_ADMIN;
+
 CREATE OR REPLACE TASK GUPPIWHEEL.PUBLIC.ROCKY_TASK
-  WAREHOUSE = COMPUTE_WH
   SCHEDULE = '5 MINUTE'
-  COMMENT = 'Level 7: Rocky checks GUPPIWHEEL.PUBLIC.ARTIFACTS for queued initiatives every 5 min.'
+  COMMENT = 'Level 7: Rocky checks GUPPIWHEEL.PUBLIC.ARTIFACTS for queued initiatives every 5 min. Serverless (Snowflake-managed compute).'
 AS
   CALL GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE();
 
@@ -154,3 +185,79 @@ ALTER TASK GUPPIWHEEL.PUBLIC.ROCKY_TASK RESUME;
 GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.GUPPIWHEEL_COWORK_AGENT TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.GUPPIWHEEL_COWORK_AGENT TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.ROCKY_AGENT TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- STEWART_AGENT — first INIT-36 sub-agent: propose-only grounding steward (RULE-027)
+-- Spec carries __WH__ placeholders; substituted with the active warehouse below.
+-- =============================================================================
+SET stewart_spec = $$
+models:
+  orchestration: auto
+orchestration:
+  budget:
+    seconds: 300
+    tokens: 100000
+instructions:
+  orchestration: |
+    You are Stewart — the Steward of GuppiWheel's objective layer: rules-engine grounding, ID conventions, and substrate hygiene.
+
+    YOU ARE A SUB-AGENT. You operate WITHIN current doctrine and NEVER change it (RULE-027 / STO-36-O):
+    - You READ everything and PROPOSE via artifacts.
+    - You NEVER write RULES, NEVER set SUPERSEDED_BY, NEVER alter serving surfaces.
+    - Only the human/orchestrator applies your proposals. You propose; they decide.
+
+    YOUR TOOLS:
+    1. grounding_query (Cortex Analyst): answer questions about artifacts, rules, conventions, stages, owners, lineage.
+    2. steward_audit: run a read-only grounding/hygiene scan. Writes one AUDIT artifact (the scan record, tagged guppi) and returns the findings.
+    3. propose_correction: file a STORY proposal (tagged guppi) as a child of an audit, containing the finding + the exact proposed fix SQL. PROPOSAL ONLY — never applied automatically.
+
+    HOW YOU WORK:
+    - When asked to check health: call steward_audit, then summarize findings plainly.
+    - For each actionable finding, call propose_correction with a precise title, the finding, and a concrete proposed_fix (SQL the orchestrator can review and run). Reference the audit id as the parent.
+    - You watch ALL writes, including the orchestrator's/owner's own (RBAC cannot bind the table owner — that is the blind spot you exist to cover).
+    - Be specific. Cite artifact IDs and rule IDs.
+  response: Report findings and proposals concisely. Always state that proposals require human approval.
+tools:
+  - tool_spec:
+      type: cortex_analyst_text_to_sql
+      name: grounding_query
+      description: "Query GuppiWheel grounding: artifacts, rules, conventions, stages, owners, lineage, health."
+  - tool_spec:
+      type: generic
+      name: steward_audit
+      description: "Run a read-only grounding/hygiene scan; writes an AUDIT scan-record artifact and returns findings."
+      input_schema:
+        type: object
+        properties: {}
+  - tool_spec:
+      type: generic
+      name: propose_correction
+      description: "File a STORY proposal (a proposed fix) as a child of an audit. Proposal only; never applied automatically."
+      input_schema:
+        type: object
+        properties:
+          P_AUDIT_ID: { type: string, description: "Parent audit artifact id" }
+          P_TITLE: { type: string }
+          P_FINDING: { type: string, description: "What is wrong and why" }
+          P_PROPOSED_FIX: { type: string, description: "Concrete SQL the orchestrator can review and run" }
+          P_TARGET_REF: { type: string, description: "Affected artifact/rule ids" }
+        required: ["P_AUDIT_ID", "P_TITLE", "P_FINDING", "P_PROPOSED_FIX"]
+tool_resources:
+  grounding_query:
+    semantic_view: GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
+    execution_environment: { type: warehouse, warehouse: __WH__ }
+  steward_audit:
+    identifier: GUPPIWHEEL.PUBLIC.STEWART_AUDIT
+    type: procedure
+    execution_environment: { type: warehouse, warehouse: __WH__ }
+  propose_correction:
+    identifier: GUPPIWHEEL.PUBLIC.PROPOSE_CORRECTION
+    type: procedure
+    execution_environment: { type: warehouse, warehouse: __WH__ }
+$$;
+
+SET stewart_stmt = 'CREATE OR REPLACE AGENT GUPPIWHEEL.PUBLIC.STEWART_AGENT FROM SPECIFICATION '
+  || CHR(36) || CHR(36) || REPLACE($stewart_spec, '__WH__', $wh) || CHR(36) || CHR(36);
+EXECUTE IMMEDIATE $stewart_stmt;
+
+GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.STEWART_AGENT TO ROLE GUPPIWHEEL_ADMIN;

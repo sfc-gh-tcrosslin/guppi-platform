@@ -59,6 +59,18 @@ SELECT 'SUBMIT_INITIATIVE',
 
 -- Does the owner-scoped edit proc exist?
 SHOW PROCEDURES LIKE 'UPDATE_OWN_ARTIFACT' IN SCHEMA GUPPIWHEEL.PUBLIC;
+
+-- RULE-029 / substrate uniqueness invariant (the single write path)
+-- a) NO role except the table owner may hold direct INSERT on ARTIFACTS
+SHOW GRANTS ON TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS;
+-- Flag: any INSERT granted to a ROLE (not OWNERSHIP) -> HOLE (re-opens the duplicate-ID batch path)
+-- b) FUTURE GRANTS can silently re-open it on schema rebuilds -- check both schema + database level
+SHOW FUTURE GRANTS IN SCHEMA GUPPIWHEEL.PUBLIC;
+SHOW FUTURE GRANTS IN DATABASE GUPPIWHEEL;
+-- Flag: any FUTURE INSERT on TABLE -> HOLE (auto-grants INSERT on every new table incl a rebuilt ARTIFACTS)
+-- c) the gated write path + tripwire must exist
+SHOW PROCEDURES LIKE 'CREATE_ARTIFACT' IN SCHEMA GUPPIWHEEL.PUBLIC;
+SELECT COUNT(*) AS duplicate_ids FROM GUPPIWHEEL.PUBLIC.DUPLICATE_ID_SCREAM_V; -- expect 0; >0 = corruption
 ```
 
 ## Phase 2 — EXPLAIN

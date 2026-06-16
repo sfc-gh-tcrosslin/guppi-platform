@@ -1,5 +1,8 @@
 -- =============================================================================
--- guppi-platform v3.0.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.6.0 — Engine Seed 03: Procedures
+-- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
+--   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
+--   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
 -- All CREATE OR REPLACE. Safe to re-run.
 -- =============================================================================
 
@@ -84,13 +87,14 @@ LANGUAGE SQL
 EXECUTE AS OWNER  -- RULE-028: procedure-mediated write; runs as owner so contributors need no direct ARTIFACTS DML
 AS
 BEGIN
-    LET next_id NUMBER := (SELECT NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = 'INITIATIVE');
+    -- atomic allocation (RULE-029): increment first, then read, so concurrent calls cannot collide
+    UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = NEXT_SEQ + 1 WHERE ENTITY = 'INITIATIVE';
+    LET next_id NUMBER := (SELECT NEXT_SEQ - 1 FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = 'INITIATIVE');
     LET init_id VARCHAR := 'INIT-' || :next_id::VARCHAR;
     INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, OWNER, CONTENT, METADATA)
     SELECT :init_id, 'INITIATIVE', 'Initiate', :TITLE, CURRENT_USER(),
       PARSE_JSON(OBJECT_CONSTRUCT('hypothesis', :HYPOTHESIS, 'instructions', :INSTRUCTIONS)::VARCHAR),
       PARSE_JSON(OBJECT_CONSTRUCT('priority', 'P2', 'submitted_via', 'SUBMIT_INITIATIVE')::VARCHAR);
-    UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = :next_id + 1 WHERE ENTITY = 'INITIATIVE';
     RETURN 'Submitted: ' || :init_id || ' (Initiate). Rocky picks up within 5 minutes.';
 END;
 
@@ -153,7 +157,12 @@ def run(session):
             synthesis = "\\n".join(text_parts)
     except (json.JSONDecodeError, KeyError, TypeError):
         pass
-    res_id = "RES-" + init_id.replace("INIT-", "") + "-ROCKY"
+    base_id = "RES-" + init_id.replace("INIT-", "") + "-ROCKY"
+    res_id = base_id
+    v = 2
+    while session.sql("SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[res_id]).collect()[0]["C"] > 0:
+        res_id = base_id + "-V" + str(v)
+        v += 1
     fw_content = json.dumps({"synthesis": synthesis[:12000], "executor": "rocky-cortex-agent-v3"})
     fw_meta = json.dumps({"model": "auto", "has_web_search": True})
     try:
@@ -340,3 +349,165 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARC
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,VARIANT,ARRAY) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE() TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- CREATE_ARTIFACT — the single gated write path (RULE-029)
+-- Registry-driven gap-free allocation from ID_CONVENTIONS; refuses existing IDs.
+-- Dual mode: P_EXPLICIT_ID (descriptive, uniqueness-checked) or auto from (TYPE, PRODUCT).
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
+  P_TYPE VARCHAR,
+  P_TITLE VARCHAR,
+  P_PRODUCT VARCHAR DEFAULT NULL,
+  P_CONTENT VARIANT DEFAULT NULL,
+  P_PARENT_ID VARCHAR DEFAULT NULL,
+  P_STAGE VARCHAR DEFAULT NULL,
+  P_TAGS ARRAY DEFAULT NULL,
+  P_EXPLICIT_ID VARCHAR DEFAULT NULL,
+  P_METADATA VARIANT DEFAULT NULL
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+
+VALID_TYPES = {"INITIATIVE","RESEARCH","STORY","EPIC","APP","MODEL","DASHBOARD",
+               "NARRATIVE","DEFECT","INCIDENT","AUDIT","OPS_EVENT","OUTCOME","SKILL"}
+VALID_STAGES = {"Initiate","Research","Building","Built","Narrated","Resolved",
+                "ASPIRATIONAL","SELECTED","TRACKED","RESOLVED"}
+
+def _count(session, sql, params):
+    return session.sql(sql, params=params).collect()[0]["C"]
+
+def _asobj(v, default):
+    if v is None:
+        return default
+    if isinstance(v, (dict, list)):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return default
+    return default
+
+def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_tags, p_explicit_id, p_metadata):
+    t = (p_type or "").upper().strip()
+    if t not in VALID_TYPES:
+        return {"error": "invalid TYPE", "got": p_type, "allowed": sorted(VALID_TYPES)}
+    if not p_title:
+        return {"error": "TITLE required"}
+    stage = (p_stage if isinstance(p_stage, str) else None) or "Initiate"
+    if stage not in VALID_STAGES:
+        return {"error": "invalid STAGE", "got": stage, "allowed": sorted(VALID_STAGES)}
+
+    if isinstance(p_explicit_id, str) and p_explicit_id.strip():
+        new_id = p_explicit_id.strip()
+        if _count(session, "SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", [new_id]) > 0:
+            return {"error": "DUPLICATE: id already exists", "id": new_id}
+    else:
+        prod = (p_product if isinstance(p_product, str) else "").upper().strip()
+        if t == "STORY":
+            ent = "STORY_" + prod
+        elif t == "DEFECT":
+            ent = "DEFECT_" + prod
+        elif t in ("APP","MODEL","DASHBOARD"):
+            ent = "APP"
+        else:
+            ent = t
+        reg = session.sql(
+            "SELECT ID_PREFIX, NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?",
+            params=[ent]
+        ).collect()
+        if not reg or reg[0]["ID_PREFIX"] is None or reg[0]["NEXT_SEQ"] is None:
+            return {"error": "no registered series; supply P_EXPLICIT_ID or register a convention",
+                    "entity": ent, "hint": "STORY/DEFECT require P_PRODUCT"}
+        prefix = reg[0]["ID_PREFIX"]
+        session.sql("UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = NEXT_SEQ + 1 WHERE ENTITY = ?", params=[ent]).collect()
+        nv = session.sql("SELECT NEXT_SEQ - 1 AS C FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?", params=[ent]).collect()[0]["C"]
+        new_id = prefix + str(nv)
+        if _count(session, "SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", [new_id]) > 0:
+            return {"error": "ALLOCATION COLLISION (counter behind data)", "id": new_id, "entity": ent}
+
+    owner = session.sql("SELECT CURRENT_USER() AS C").collect()[0]["C"]
+    content = _asobj(p_content, {})
+    meta = _asobj(p_metadata, {})
+    tags = _asobj(p_tags, [])
+    if not isinstance(tags, list):
+        tags = []
+
+    session.sql(
+        "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS "
+        "(ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, TAGS, METADATA, CREATED_AT, UPDATED_AT) "
+        "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
+        params=[new_id, t, stage, (p_parent_id if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None), p_title, owner,
+                json.dumps(content), json.dumps(tags), json.dumps(meta)]
+    ).collect()
+    return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,ARRAY,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,ARRAY,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- =============================================================================
+-- STEWART_AUDIT — Stewart's read-only grounding/hygiene scan (RULE-027).
+-- Writes ONE AUDIT scan-record artifact (tagged guppi). Proposes nothing here.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.STEWART_AUDIT()
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+def run(session):
+    rows = session.sql("SELECT signal, severity, n, detail FROM GUPPIWHEEL.PUBLIC.GROUNDING_HEALTH_V WHERE n > 0").collect()
+    findings = [{"signal": r["SIGNAL"], "severity": r["SEVERITY"], "n": int(r["N"]), "detail": r["DETAIL"]} for r in rows]
+    known_open = [{"id": "STO-SUBSTRATE-9", "issue": "seed vs live audit-grounding model fork (in-wheel AUDIT artifacts vs AUDIT_RUNS tables)"}]
+    verdict = "issues" if findings else "clean"
+    ts = session.sql("SELECT TO_VARCHAR(CURRENT_TIMESTAMP(),'YYYYMMDDHH24MISS') AS C").collect()[0]["C"]
+    audit_id = "STEWART-AUDIT-" + ts
+    content = json.dumps({"verdict": verdict, "grounding_health": findings, "known_open": known_open,
+        "scanned_surfaces": ["ARTIFACTS", "RULES", "ID_CONVENTIONS"],
+        "note": "Read-only scan. Stewart proposes corrections via STORY children; it does not apply fixes (RULE-027)."})
+    meta = json.dumps({"agent": "Stewart", "kind": "grounding_health"})
+    session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, PARSE_JSON(?), NULL, 'Built', ARRAY_CONSTRUCT('guppi'), ?, PARSE_JSON(?))",
+        params=["Stewart grounding audit " + ts, content, audit_id, meta]).collect()
+    return {"audit_id": audit_id, "verdict": verdict, "issue_count": len(findings), "findings": findings}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.STEWART_AUDIT() TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- PROPOSE_CORRECTION — Stewart files a STORY proposal (tagged guppi) under an audit.
+-- Proposal ONLY: routes through CREATE_ARTIFACT; cannot write RULES/SUPERSEDED_BY (RULE-027).
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.PROPOSE_CORRECTION(
+  P_AUDIT_ID VARCHAR, P_TITLE VARCHAR, P_FINDING VARCHAR, P_PROPOSED_FIX VARCHAR, P_TARGET_REF VARCHAR DEFAULT NULL
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+def run(session, p_audit_id, p_title, p_finding, p_proposed_fix, p_target_ref):
+    tref = p_target_ref if isinstance(p_target_ref, str) else None
+    parent = p_audit_id if (isinstance(p_audit_id, str) and p_audit_id.strip()) else None
+    content = json.dumps({"finding": p_finding, "proposed_fix": p_proposed_fix, "target_ref": tref, "proposed_by": "Stewart"})
+    meta = json.dumps({"agent": "Stewart", "proposal": True, "status": "proposed", "authority": "sub-agent propose-only per RULE-027"})
+    r = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('STORY', ?, 'STEWART', PARSE_JSON(?), ?, 'Initiate', ARRAY_CONSTRUCT('guppi'), NULL, PARSE_JSON(?))",
+        params=[p_title, content, parent, meta]).collect()
+    out = r[0][0] if r else None
+    return {"proposed_story": out, "parent_audit": parent, "note": "Proposal only. Human/orchestrator reviews + applies. Stewart cannot change doctrine (RULE-027)."}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PROPOSE_CORRECTION(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;

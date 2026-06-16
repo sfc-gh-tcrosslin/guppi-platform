@@ -1,10 +1,15 @@
-# guppi-platform v3.0.0
+# guppi-platform v3.6.0
 
-GuppiWheel — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
+**Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
+
+> **New here? Read [`COCO.md`](COCO.md) first.** It is the contract: what is invariant (don't alter the guarantee), what is a default (yours to change), what is suggestive (author to taste), and the conformance gate that defines "you got Guppi."
+
+Brand hierarchy: **Guppi** (product) → **GuppiWheel** (engine / `GUPPIWHEEL` db) → **Rocky / Cowork / TARS / Stewart** (agents) → **CoCo** (interface).
 
 Includes:
-- **Rocky** — autonomous research Cortex Agent (server-side, 5-min Task)
+- **Rocky** — autonomous research Cortex Agent (server-side, serverless 5-min Task)
 - **Cowork** — user-facing dispatch agent (submit, advance, query, publish)
+- **Stewart** — propose-only grounding steward (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
 - **The Bond** — shared cognition layer (separate database)
 - **GUPPI viewer** — Flask app rendering Command Center + Flywheel from `localhost:8888`
@@ -19,26 +24,38 @@ A Narrated artifact that spawns a follow-on creates a NEW artifact at Initiate. 
 
 ## Install (fresh account)
 
+**Prerequisites:**
+- Install as a role with account privileges (ACCOUNTADMIN, or a role with `CREATE DATABASE`, `CREATE ROLE`, and `EXECUTE MANAGED TASK` for the serverless Rocky task).
+- A warehouse must be **active in your session** — we do not dictate one. `05_agents.sql` binds agents to your `CURRENT_WAREHOUSE()` and fails loud if none is set:
+  ```sql
+  USE WAREHOUSE <your_wh>;
+  ```
+
 ```bash
 # 1. Clone or pull this plugin
 git clone <this-repo> guppi-platform
 cd guppi-platform
 
-# 2. Run engine seeds — safe to re-run
+# 2. Run engine seeds in order — safe to re-run
 snow sql -f seeds/engine/01_schema.sql
 snow sql -f seeds/engine/02_rules.sql
 snow sql -f seeds/engine/03_procs.sql
 snow sql -f seeds/engine/04_semantic_view.sql
-snow sql -f seeds/engine/05_agents.sql
+snow sql -f seeds/engine/05_agents.sql      # requires an active warehouse (see prereqs)
 
-# 3. Bootstrap content — ONE TIME only on fresh accounts
+# 3. Bootstrap content — ONE TIME only on fresh accounts (seeds the ID registry; no artifacts)
 snow sql -f seeds/content/bootstrap.sql
 
-# 4. Install viewer dependencies and launch
+# 4. Verify: the conformance gate must report PASS on every row
+snow sql -q "SELECT * FROM GUPPIWHEEL.PUBLIC.GUPPI_CONFORMANCE_V ORDER BY check_name;"
+
+# 5. Install viewer dependencies and launch
 pip install -r skills/guppi/requirements.txt
 SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --serve
 # Open http://localhost:8888
 ```
+
+A fresh install starts with a clean wheel (no seeded artifacts), so the gate passes immediately. Re-run the gate any time after you build or re-author — it is the definition of done (see `COCO.md`).
 
 ## Upgrade from 2.0.0
 
@@ -68,25 +85,33 @@ It does **NOT** touch your ARTIFACTS rows beyond TYPE/STAGE normalization. Your 
 ```
 GUPPIWHEEL.PUBLIC
 ├── ARTIFACTS              -- single source of truth (every type)
-├── RULES                  -- governance as data (RULE-013..018 + STG/CMP/QAL/TMG)
+├── RULES                  -- governance as data (RULE-013..029 + STG/CMP/QAL/TMG)
 ├── VIOLATIONS             -- where broken rules land
-├── ID_CONVENTIONS         -- sequence tracker for INIT-N etc.
+├── ID_CONVENTIONS         -- gap-free ID registry (ENTITY, NEXT_SEQ, ID_PREFIX) — atomic, no SEQUENCE objects
 ├── INITIATIVE_STEPS       -- Rocky step logs
 ├── PRODUCTS               -- product groupings (used by viewer)
 ├── ARTIFACT_LAUNCHES      -- audit log of every artifact open
 ├── PLUGIN_VERSION         -- what's installed
 ├── @ARTIFACT_ASSETS       -- internal stage for HTML/PDF bytes
+├── DUPLICATE_ID_SCREAM_V  -- RULE-029 tripwire (always 0 rows)
+├── GROUNDING_HEALTH_V     -- Stewart's senses: orphans, noncanonical types/stages, dead refs
+├── GUPPI_CONFORMANCE_V    -- the conformance gate (every row PASS = you got Guppi)
+├── CREATE_ARTIFACT proc   -- the SINGLE gated write path (gap-free IDs; direct INSERT revoked)
 ├── ADVANCE_STAGE proc     -- universal stage gate
 ├── SUBMIT_INITIATIVE proc -- queue work for Rocky
 ├── ROCKY_EXECUTE proc     -- Rocky's per-cycle handler
 ├── PUBLISH_ARTIFACT proc  -- register a launchable
+├── STEWART_AUDIT proc     -- read-only grounding/hygiene scan (writes one AUDIT artifact)
+├── PROPOSE_CORRECTION proc -- file a fix proposal as a STORY (never auto-applied)
 ├── GET_ARTIFACT_LAUNCH    -- resolve to URL/identifier (presigned + audited)
 ├── GUPPIWHEEL_SV          -- semantic view for Cortex Analyst
 ├── ROCKY_AGENT            -- web-search-only research agent
 ├── GUPPIWHEEL_COWORK_AGENT -- user-facing dispatch agent
-└── ROCKY_TASK             -- 5-min cycle running ROCKY_EXECUTE
+├── STEWART_AGENT          -- propose-only grounding steward (sub-agent)
+└── ROCKY_TASK             -- serverless 5-min cycle running ROCKY_EXECUTE
 
 Roles: GUPPIWHEEL_ADMIN > GUPPIWHEEL_CONTRIBUTOR > GUPPIWHEEL_VIEWER
+(direct INSERT on ARTIFACTS is revoked even from ADMIN — writes flow only through procs)
 ```
 
 ## Architecture principles
@@ -97,6 +122,8 @@ Roles: GUPPIWHEEL_ADMIN > GUPPIWHEEL_CONTRIBUTOR > GUPPIWHEEL_VIEWER
 - **RULE-016 No Self-Spawning** — agents never enqueue work for themselves.
 - **RULE-017 Separation of Execution** — Cowork dispatches, Rocky researches.
 - **RULE-018 Launchables Live in the Wheel** — bytes belong in `@ARTIFACT_ASSETS`, never in local file paths.
+- **RULE-027 Doctrine Authority** — sub-agents (e.g. Stewart) PROPOSE via artifacts; only the human/orchestrator changes doctrine (RULES, SUPERSEDED_BY, serving surfaces).
+- **RULE-029 Uniqueness** — no duplicate IDs, ever. Enforced procedurally (Snowflake does not enforce PK/UNIQUE); watched by `DUPLICATE_ID_SCREAM_V`.
 
 ## Universal launch model
 
@@ -117,10 +144,11 @@ metadata.launch = {
 
 ## Documentation
 
+- See `COCO.md` for the tier contract and the conformance gate (read this first)
 - See `CHANGELOG.md` for version history and breaking changes
 - See `skills/guppiwheel/SKILL.md` for the full GuppiWheel concept
 - See `skills/guppi/SKILL.md` for the viewer architecture
-- See `agents/rocky.md` and `agents/tars.md` for agent behavior contracts
+- See `agents/rocky.md`, `agents/tars.md`, and `agents/steward.md` for agent behavior contracts
 - See `references/maturity-model.md` and `references/trust-equation.md` for theoretical foundations
 
 ## Versioning

@@ -1,5 +1,8 @@
 -- =============================================================================
--- guppi-platform v3.0.0 — Engine Seed 01: Schema
+-- guppi-platform v3.6.0 — Engine Seed 01: Schema
+-- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
+--   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
+--   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
 -- Safe to re-run. CREATE OR REPLACE for views, CREATE IF NOT EXISTS for tables.
 -- Customer DATA in ARTIFACTS, RULES, VIOLATIONS, ID_CONVENTIONS, INITIATIVE_STEPS,
 -- ARTIFACT_LAUNCHES, PLUGIN_VERSION, PRODUCTS — never overwritten by this seed.
@@ -68,6 +71,7 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.VIOLATIONS (
 CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.ID_CONVENTIONS (
     ENTITY    VARCHAR(50) NOT NULL PRIMARY KEY,
     NEXT_SEQ  NUMBER      NOT NULL DEFAULT 1,
+    ID_PREFIX VARCHAR(20),   -- RULE-029: literal prefix CREATE_ARTIFACT prepends (e.g. 'INIT-'); NULL = descriptive / product-registered, no auto-alloc
     NOTES     VARCHAR(500)
 );
 
@@ -125,7 +129,7 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PLUGIN_VERSION (
 );
 
 MERGE INTO GUPPIWHEEL.PUBLIC.PLUGIN_VERSION t
-USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.0.0' AS VERSION) s
+USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.6.0' AS VERSION) s
 ON t.PLUGIN_NAME = s.PLUGIN_NAME
 WHEN MATCHED THEN UPDATE SET VERSION = s.VERSION, INSTALLED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (PLUGIN_NAME, VERSION) VALUES (s.PLUGIN_NAME, s.VERSION);
@@ -183,6 +187,59 @@ SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, 
        CONTENT:grade::VARCHAR AS GRADE
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'AUDIT';
 
+-- DUPLICATE_ID_SCREAM_V — RULE-029 tripwire. Should ALWAYS be empty. Watched by the data-hygiene agent.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.DUPLICATE_ID_SCREAM_V AS
+SELECT ID, COUNT(*) AS row_count, LISTAGG(DISTINCT TYPE, ',') AS types,
+       LISTAGG(DISTINCT LEFT(TITLE,40), ' | ') AS titles, MAX(UPDATED_AT) AS last_touch
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+GROUP BY ID HAVING COUNT(*) > 1;
+
+-- GROUNDING_HEALTH_V — Stewart's senses (RULE-027). Deterministic grounding/hygiene drift signals; healthy = all N=0.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.GROUNDING_HEALTH_V AS
+WITH canon_type AS (
+  SELECT column1 AS t FROM VALUES ('INITIATIVE'),('RESEARCH'),('STORY'),('EPIC'),('APP'),('MODEL'),('DASHBOARD'),('NARRATIVE'),('DEFECT'),('INCIDENT'),('AUDIT'),('OPS_EVENT'),('OUTCOME'),('SKILL')
+),
+canon_stage AS (
+  SELECT column1 AS s FROM VALUES ('Initiate'),('Research'),('Building'),('Built'),('Narrated'),('Resolved'),('ASPIRATIONAL'),('SELECTED'),('TRACKED'),('RESOLVED')
+)
+SELECT 'duplicate_id' AS signal, 'HIGH' AS severity, COUNT(*) AS n, LISTAGG(ID, ', ') WITHIN GROUP (ORDER BY ID) AS detail
+FROM (SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS GROUP BY ID HAVING COUNT(*)>1)
+UNION ALL
+SELECT 'orphan_parent_id', 'HIGH', COUNT(*), LISTAGG(a.ID, ', ') WITHIN GROUP (ORDER BY a.ID)
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.PARENT_ID IS NOT NULL AND NOT EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS p WHERE p.ID = a.PARENT_ID)
+UNION ALL
+SELECT 'noncanonical_artifact_type', 'MED', COUNT(*), LISTAGG(DISTINCT TYPE, ', ')
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE NOT IN (SELECT t FROM canon_type)
+UNION ALL
+SELECT 'noncanonical_artifact_stage', 'MED', COUNT(*), LISTAGG(DISTINCT STAGE, ', ')
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE STAGE NOT IN (SELECT s FROM canon_stage)
+UNION ALL
+SELECT 'rule_dead_db_ref', 'HIGH', COUNT(*), LISTAGG(RULE_ID, ', ') WITHIN GROUP (ORDER BY RULE_ID)
+FROM GUPPIWHEEL.PUBLIC.RULES
+WHERE CONDITION_SQL LIKE '%FLYWHEEL.PUBLIC%' OR CONDITION_SQL LIKE '%GUPPI.PLATFORM%' OR MESSAGE LIKE '%FLYWHEEL.PUBLIC%'
+UNION ALL
+SELECT 'rule_noncanonical_applies_to', 'MED', COUNT(*), LISTAGG(RULE_ID, ', ') WITHIN GROUP (ORDER BY RULE_ID)
+FROM GUPPIWHEEL.PUBLIC.RULES
+WHERE ENABLED=TRUE AND APPLIES_TO_TYPE <> 'ALL' AND APPLIES_TO_TYPE NOT IN (SELECT t FROM canon_type);
+
+-- GUPPI_CONFORMANCE_V — the conformance gate (COCO.md "you got Guppi when this passes").
+-- Definition of done after any build or re-author: every row must read PASS. These are the
+-- Tier 0 invariants that drift silently because Snowflake does not enforce PK/UNIQUE/FK.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.GUPPI_CONFORMANCE_V AS
+SELECT 'no-duplicate-ids' AS check_name, 'Tier0 #2 (no dup IDs)' AS tier_ref,
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.DUPLICATE_ID_SCREAM_V) = 0, 'PASS', 'FAIL') AS status
+UNION ALL
+SELECT 'ids-distinct', 'Tier0 #2 (distinct = total)',
+       IFF((SELECT COUNT(DISTINCT ID) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS)
+            = (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS), 'PASS', 'FAIL')
+UNION ALL
+SELECT 'grounding-health', 'Tier0 #1/#8 (no orphans/noncanonical, no dead refs)',
+       IFF((SELECT COALESCE(SUM(n), 0) FROM GUPPIWHEEL.PUBLIC.GROUNDING_HEALTH_V) = 0, 'PASS', 'FAIL')
+UNION ALL
+SELECT 'rules-present', 'Tier0 #5 (doctrine is data)',
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.RULES WHERE ENABLED = TRUE) > 0, 'PASS', 'FAIL');
+
 -- =============================================================================
 -- RBAC (3-tier)
 -- =============================================================================
@@ -218,3 +275,9 @@ GRANT ALL PRIVILEGES ON SCHEMA GUPPIWHEEL.PUBLIC TO ROLE GUPPIWHEEL_ADMIN;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA GUPPIWHEEL.PUBLIC TO ROLE GUPPIWHEEL_ADMIN;
 GRANT ALL PRIVILEGES ON ALL VIEWS IN SCHEMA GUPPIWHEEL.PUBLIC TO ROLE GUPPIWHEEL_ADMIN;
 GRANT READ, WRITE ON STAGE GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS TO ROLE GUPPIWHEEL_ADMIN;
+
+-- RULE-029: ARTIFACTS creation is procedure-mediated even for ADMIN. GRANT ALL above confers INSERT;
+-- carve it back out so the ONLY insert path is CREATE_ARTIFACT (EXECUTE AS OWNER). Admin keeps
+-- UPDATE/DELETE for data surgery/corrections. This is what makes "no duplicate IDs" a real invariant
+-- (Snowflake does not enforce PK/UNIQUE). A future GRANT INSERT here re-opens the hole -- see guppiwheel-governance.
+REVOKE INSERT ON TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS FROM ROLE GUPPIWHEEL_ADMIN;

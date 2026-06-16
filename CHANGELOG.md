@@ -2,6 +2,45 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.6.0] — 2026-06-15
+
+### Drop readiness — the Tier Contract + conformance gate (2026-06-16)
+
+Prepared guppi-platform for its first external `git clone` by another SE. Made the drop self-describing so a receiving CoCo can tell an invariant from an affordance, and made "you got Guppi" testable rather than "ran our exact files."
+
+- **`COCO.md`** (new, repo root) — the contract a receiving CoCo reads first. Three tiers: **Invariants** (enforced; don't alter the guarantee — single SSOT, no-dup IDs, gap-free registry, single gated write path, doctrine-as-data, sub-agents propose-only, headless-first, lifecycle), **Defaults** (works on clone; yours to change — procs, agents, compute wiring, viewer), **Suggestive** (author to taste — cadence, cosmetics, extra tooling). Each `seeds/engine/*.sql` carries an inline `TIER:` header.
+- **`GUPPI_CONFORMANCE_V`** (new) — the conformance gate; the definition of done. Every row must read `PASS` (no-duplicate-ids, ids-distinct, grounding-health, rules-present). A fresh install passes immediately; re-run after any build or re-author.
+- **Warehouse: we no longer dictate one.** `05_agents.sql` binds agents to the installer's active `CURRENT_WAREHOUSE()` (placeholder substitution, fails loud if none set) and `ROCKY_TASK` is now **serverless** (no `WAREHOUSE` param; requires `EXECUTE MANAGED TASK`).
+- **Applied `STO-STEWART-1`**: cleaned the 3 orphaned narratives (`NAR-4`, `NAR-5`, `NAR-CHANGELOG-3.5.0`) whose `PARENT_ID` held the literal `'None'`; gate now green.
+- **README** refreshed to v3.6.0 (Stewart, warehouse/`EXECUTE MANAGED TASK` prereqs, conformance-gate verification step, `COCO.md` pointer). Fixed `PLUGIN_VERSION` seed drift (`3.0.0` → `3.6.0`).
+- **Genericized** `RULE-024` — removed a customer name from the secrets-hygiene reason text (seed + live).
+
+### Feature — Stewart, the Grounding Steward (first INIT-36 sub-agent)
+
+Shipped the first INIT-36 sub-agent and the dry run for the orchestrator/sub-agent pattern: a propose-only, Cortex-Analyst-oriented steward of the objective layer (rules-engine grounding, ID conventions, substrate hygiene).
+
+- **`RULE-027`** — Doctrine-Change Authority Is Orchestrator-Only. Sub-agents operate within current doctrine: they read everything and **propose via artifacts**, but never write `RULES`, set `SUPERSEDED_BY`, or alter serving surfaces. Realizes `STO-36-O`.
+- **`GROUNDING_HEALTH_V`** — Stewart's senses: deterministic drift signals (duplicate IDs, orphan parents, non-canonical TYPE/STAGE, dead-DB rule refs, non-canonical `APPLIES_TO_TYPE`).
+- **`STEWART_AUDIT`** — read-only scan; writes one `AUDIT` scan-record artifact (tagged `guppi`).
+- **`PROPOSE_CORRECTION`** — files `STORY` proposals (tagged `guppi`) under an audit; routes through `CREATE_ARTIFACT`. **Proposal only.**
+- **`STEWART_AGENT`** — Cortex Agent: `cortex_analyst_text_to_sql` over `GUPPIWHEEL_SV` + the two procs as tools.
+- **Boundary is structural**: no tool Stewart holds can write doctrine. He explicitly monitors orchestrator/owner writes — the blind spot RBAC cannot bind.
+- **Bug caught on first run**: `CREATE_ARTIFACT` was writing the literal string `'None'` for null parents (3 orphaned artifacts). Fixed the proc (`NULLIF` + coercion); Stewart filed `STO-STEWART-1` proposing the data cleanup. Tracked as `STO-36-STEWART`.
+
+## [3.5.0] — 2026-06-15
+
+### Foundation — substrate integrity: dedup + enforced ID uniqueness (EPIC-SUBSTRATE)
+
+Made "no duplicate artifact IDs" a real, enforced invariant before INIT-36. A TARS-FULL audit found 31 duplicate IDs in the `ARTIFACTS` SSOT — including `INIT-36` held by 5 different initiatives after a batch load bypassed the (non-atomic, stale) `ID_CONVENTIONS` counter. Root cause: Snowflake does not enforce `PRIMARY KEY`/`UNIQUE` on standard tables, and there was no single write path.
+
+- **Dedup**: removed 19 exact-duplicate rows; re-IDed 15 divergent collisions (canonical row keeps the ID; childless colliders get fresh IDs — e.g. the 4 mis-loaded Adonis initiatives → `INIT-38..41`). Split `E-013` into Core Platform (`E-013`) + ETHOS (`E-21`) with children re-parented. Result: 394 rows = 394 distinct IDs.
+- **`CREATE_ARTIFACT`** (new, `03_procs.sql`): the single gated write path. Registry-driven, gap-free atomic allocation from `ID_CONVENTIONS` keyed by `(TYPE, PRODUCT)`; dual-mode (auto-allocate or uniqueness-checked explicit ID); validates `TYPE`/`STAGE` domains. `EXECUTE AS OWNER` per RULE-028.
+- **Registry**: `ID_CONVENTIONS` gains `ID_PREFIX`; introducing a convention = adding a row (honored automatically). Allocation is a gap-free atomic counter (not Snowflake sequences, which leave large gaps in human-referenced IDs).
+- **Lockdown**: revoked direct `INSERT` on `ARTIFACTS` from `GUPPIWHEEL_ADMIN` (admin keeps UPDATE/DELETE for surgery); informational `PRIMARY KEY`; `DUPLICATE_ID_SCREAM_V` tripwire.
+- **Agents hardened**: `ROCKY_EXECUTE` now versions research IDs on collision (`-V2`…) — it had created the `RES-20-ROCKY` duplicate; `SUBMIT_INITIATIVE` allocation made atomic.
+- **Doctrine**: `RULE-029` (ID uniqueness + single write path). `guppiwheel-governance` skill gains a future-grant INSERT guard. Anomaly cleanup (FORGE/HF drift, lowercase series, raw-UUID IDs) grandfathered — deferred to a future data-hygiene agent.
+- **Rules-engine grounding fix (live)**: corrected all 27 live `RULES.CONDITION_SQL` — they referenced dead DBs `FLYWHEEL.PUBLIC` (pre-rename) and `GUPPI.PLATFORM.AUDIT_*` (now `DONOTUSEGUPPI`), and used lowercase `APPLIES_TO_TYPE`/TYPE literals that never matched UPPERCASE data. `QAL-001` (block, ALL) was effectively blocking all stage advancement. `ADVANCE_STAGE` now evaluates cleanly. Added 7 audit-model-independent doctrine rules to the seed (`RULE-020/021/024/025/026/028`, `STG-005`). Discovered a seed↔live **audit-grounding model divergence** (seed = in-wheel AUDIT artifacts; live = `AUDIT_RUNS` tables, unseeded) — filed `STO-SUBSTRATE-9` for deliberate reconciliation rather than a breaking blind-sync.
+
 ## [3.4.1] — 2026-06-15
 
 ### Security — RBAC lockdown, secondary-table pass (follow-on to 3.4.0)
