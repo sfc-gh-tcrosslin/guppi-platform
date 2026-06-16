@@ -1,4 +1,4 @@
-# guppi-platform v3.6.0
+# guppi-platform v3.7.0
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -10,6 +10,7 @@ Includes:
 - **Rocky** — autonomous research Cortex Agent (server-side, serverless 5-min Task)
 - **Cowork** — user-facing dispatch agent (submit, advance, query, publish)
 - **Stewart** — propose-only grounding steward (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
+- **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023)
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
 - **The Bond** — shared cognition layer (separate database)
 - **GUPPI viewer** — Flask app rendering Command Center + Flywheel from `localhost:8888`
@@ -108,6 +109,9 @@ GUPPIWHEEL.PUBLIC
 ├── ROCKY_AGENT            -- web-search-only research agent
 ├── GUPPIWHEEL_COWORK_AGENT -- user-facing dispatch agent
 ├── STEWART_AGENT          -- propose-only grounding steward (sub-agent)
+├── BOB_AGENT              -- Bob's web_search grounding scout (Building-stage)
+├── BOB_EXECUTE proc        -- Bob: model bake-off + cross-judge → winner NARRATIVE
+├── MODEL_CATALOG          -- enabled models for the bake-off (RULE-023, foundation-model agnosticism)
 └── ROCKY_TASK             -- serverless 5-min cycle running ROCKY_EXECUTE
 
 Roles: GUPPIWHEEL_ADMIN > GUPPIWHEEL_CONTRIBUTOR > GUPPIWHEEL_VIEWER
@@ -148,7 +152,7 @@ metadata.launch = {
 - See `CHANGELOG.md` for version history and breaking changes
 - See `skills/guppiwheel/SKILL.md` for the full GuppiWheel concept
 - See `skills/guppi/SKILL.md` for the viewer architecture
-- See `agents/rocky.md`, `agents/tars.md`, and `agents/steward.md` for agent behavior contracts
+- See `agents/rocky.md`, `agents/tars.md`, `agents/steward.md`, and `agents/bob.md` for agent behavior contracts
 - See `references/maturity-model.md` and `references/trust-equation.md` for theoretical foundations
 
 ## Versioning

@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.6.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.7.0 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -511,3 +511,190 @@ def run(session, p_audit_id, p_title, p_finding, p_proposed_fix, p_target_ref):
     return {"proposed_story": out, "parent_audit": parent, "note": "Proposal only. Human/orchestrator reviews + applies. Stewart cannot change doctrine (RULE-027)."}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PROPOSE_CORRECTION(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- BOB_EXECUTE — Bob, the Building-stage agent (INIT-36). Takes a RESEARCH artifact,
+-- gathers grounding (research + Guppi + Bond + BOB_AGENT web brief), authors the same
+-- hypothetical NARRATIVE across all enabled MODEL_CATALOG models, then runs a
+-- CROSS-JUDGE panel (every candidate scored by every OTHER model — no self-judging,
+-- RULE-023), writes one in-wheel AUDIT per candidate, and writes the highest-trust
+-- winner as a NARRATIVE (Built) with full provenance. v1 stops at the NARRATIVE.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(P_RESEARCH_ID VARCHAR, P_TARGET VARCHAR DEFAULT NULL, P_ANGLE VARCHAR DEFAULT NULL)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+
+def _agent_text(resp):
+    try:
+        j = json.loads(resp)
+        parts = [it.get("text", "") for it in j.get("content", []) if isinstance(it, dict) and it.get("type") == "text"]
+        if parts:
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return resp
+
+def _parse_json(s):
+    # Handles bare JSON, ```json fences, and double-JSON-encoded strings (AI_COMPLETE
+    # returns JSON-valued completions as an encoded string -> unwrap layers).
+    t = s
+    for _ in range(3):
+        if isinstance(t, dict):
+            return t
+        if not isinstance(t, str):
+            return None
+        ts = t.strip()
+        if ts.startswith("```"):
+            ts = ts.strip("`")
+            if ts[:4].lower() == "json":
+                ts = ts[4:]
+            ts = ts.strip()
+        v = None
+        try:
+            v = json.loads(ts, strict=False)
+        except Exception:
+            if "{" in ts and "}" in ts:
+                try:
+                    v = json.loads(ts[ts.find("{"):ts.rfind("}")+1], strict=False)
+                except Exception:
+                    v = None
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            t = v
+            continue
+        return None
+    return None
+
+def _ai(session, model, prompt):
+    r = session.sql("SELECT AI_COMPLETE('" + model + "', ?) AS R", params=[prompt]).collect()
+    return str(r[0]["R"]) if r and r[0]["R"] is not None else None
+
+def run(session, p_research_id, p_target, p_angle):
+    rows = session.sql(
+        "SELECT TITLE, PARENT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN "
+        "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[p_research_id]).collect()
+    if not rows:
+        return {"error": "research not found", "id": p_research_id}
+    init_id = rows[0]["PARENT_ID"]; synthesis = rows[0]["SYN"] or ""
+    target = p_target or rows[0]["TITLE"]; angle = p_angle or ""
+
+    gup = ""
+    if init_id:
+        ir = session.sql("SELECT TITLE, COALESCE(CONTENT:hypothesis::string,'') AS H FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[init_id]).collect()
+        if ir:
+            gup = "INITIATIVE: " + (ir[0]["TITLE"] or "") + "\nHYPOTHESIS: " + (ir[0]["H"] or "")
+    bond = ""
+    try:
+        br = session.sql("SELECT KEY, LEFT(TO_JSON(CONTENT),500) AS C FROM THE_BOND.PUBLIC.MEMORY_STORE WHERE ARRAY_CONTAINS(?::variant, TAGS) ORDER BY CREATED_AT DESC LIMIT 3",
+            params=[(target.split()[0].lower() if target else "bob")]).collect()
+        bond = "\n".join(["BOND[" + (x["KEY"] or "") + "]: " + (x["C"] or "") for x in br])
+    except Exception:
+        bond = ""
+    brief = ""
+    try:
+        msg = json.dumps({"messages": [{"role": "user", "content": [{"type": "text", "text": "TARGET: " + target + "\n\nRESEARCH SUMMARY:\n" + synthesis[:6000]}]}]})
+        ar = session.sql("SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(?, ?)", params=["GUPPIWHEEL.PUBLIC.BOB_AGENT", msg]).collect()
+        brief = _agent_text(str(ar[0][0]) if ar else "")
+    except Exception as e:
+        brief = "(grounding agent unavailable: " + str(e)[:200] + ")"
+
+    rubric = ("You are Bob, a narrative builder for a Snowflake healthcare team. Using ONLY the grounding below, "
+        "write a tight, engineering-first position narrative (about 400 words) on why the TARGET should build their "
+        "governance and intelligence layer on Snowflake. Structure: (1) a punchy TITLE; (2) THESIS in 1-2 sentences; "
+        "(3) exactly 4 MOVES, each a bold headline plus 1-2 sentences, honest about fit; (4) an HONEST BOUNDARY "
+        "paragraph naming what Snowflake is NOT right for; (5) a WHY NOW close. Rules: no marketing fluff, no invented "
+        "facts, use no numbers not in the grounding, and do NOT mention the word Guppi.\n\n")
+    grounding = ("TARGET: " + target + "\nANGLE: " + angle + "\n\nRESEARCH SYNTHESIS:\n" + synthesis[:8000] +
+        "\n\nGUPPI CONTEXT:\n" + gup + "\n\nBOND:\n" + bond + "\n\nWEB GROUNDING BRIEF:\n" + brief[:4000])
+    prompt = rubric + "GROUNDING:\n" + grounding
+
+    ts = session.sql("SELECT TO_VARCHAR(CURRENT_TIMESTAMP(),'YYYYMMDDHH24MISS') AS T").collect()[0]["T"]
+    run_id = "BOB-" + p_research_id.replace("RES-", "").replace("-ROCKY", "") + "-" + ts
+    models = [x["MODEL_NAME"] for x in session.sql("SELECT MODEL_NAME FROM GUPPIWHEEL.PUBLIC.MODEL_CATALOG WHERE ENABLED ORDER BY MODEL_NAME").collect()]
+
+    candidates = {}
+    for m in models:
+        try:
+            txt = _ai(session, m, prompt)
+        except Exception:
+            txt = None
+        if txt:
+            candidates[m] = txt
+            session.sql("INSERT INTO GUPPIWHEEL.PUBLIC.BOB_BAKEOFF_CANDIDATES (RUN_ID,RESEARCH_ID,MODEL_NAME,NARRATIVE) SELECT ?,?,?,?",
+                        params=[run_id, p_research_id, m, txt]).collect()
+    if not candidates:
+        return {"error": "no candidates produced", "run_id": run_id}
+
+    judge_rubric = ("You are TARS, an INDEPENDENT trust auditor. Score the NARRATIVE for the TARGET on trust using ONLY "
+        "the GROUNDING as ground truth. Penalize claims beyond the grounding, a missing honest boundary, vagueness, or "
+        "hallucination. Reward grounded specificity, honesty about weak fit, and clear structure. Return ONLY a JSON "
+        "object: {\"trust\": <0..1 float>, \"c_signals\": <int>, \"d_signals\": <int>, \"notes\": \"<one sentence>\"}.\n\n")
+    scores = {}
+    for author, narrative in candidates.items():
+        scores[author] = []
+        for judge in models:
+            if judge == author:
+                continue
+            jp = judge_rubric + "GROUNDING:\n" + grounding[:8000] + "\n\nNARRATIVE (author hidden):\n" + narrative[:6000]
+            try:
+                obj = _parse_json(_ai(session, judge, jp))
+            except Exception:
+                obj = None
+            if isinstance(obj, dict) and obj.get("trust") is not None:
+                try:
+                    scores[author].append({"judge": judge, "trust": float(obj.get("trust")),
+                        "c": int(float(obj.get("c_signals", 0) or 0)), "d": int(float(obj.get("d_signals", 0) or 0)),
+                        "notes": str(obj.get("notes", ""))[:300]})
+                except Exception:
+                    pass
+
+    results = []; audit_ids = []
+    for author in candidates:
+        js = scores.get(author, [])
+        avg = round(sum(j["trust"] for j in js) / len(js), 4) if js else 0.0
+        results.append({"model": author, "avg_trust": avg, "n_judges": len(js)})
+        content = {"target": target, "score": avg, "c_signals": sum(j["c"] for j in js),
+            "d_signals": sum(j["d"] for j in js), "total_checks": len(js), "status": "COMPLETE",
+            "author_model": author, "run_id": run_id,
+            "findings": [{"judge": j["judge"], "trust": j["trust"], "notes": j["notes"]} for j in js]}
+        meta = {"audit_kind": "TARS", "author_model": author, "run_id": run_id, "source": "bob-bakeoff",
+            "judges": [{"model": j["judge"], "trust": j["trust"]} for j in js]}
+        aid = ("AUDIT-" + run_id + "-" + author.replace("-", "").replace(".", ""))[:60]
+        try:
+            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, 'guppi', PARSE_JSON(?), NULL, 'Built', "
+                "ARRAY_CONSTRUCT('guppi','tars','bob','bakeoff'), ?, PARSE_JSON(?))",
+                params=["TARS bake-off: " + author + " on " + target[:50], json.dumps(content), aid, json.dumps(meta)]).collect()
+            audit_ids.append(aid)
+        except Exception:
+            pass
+
+    results.sort(key=lambda x: (-x["avg_trust"], x["model"]))
+    winner = results[0]["model"]; win_text = candidates[winner]
+    tag = (target.split()[0].lower() if target else "bob")
+    nar_content = {"markdown": win_text, "target": target, "winner_model": winner}
+    nar_meta = {"winner_model": winner, "run_id": run_id, "bakeoff": results,
+        "grounding": {"research_id": p_research_id, "agent": "BOB_AGENT", "bond": True},
+        "no_guppi_mention": True, "built_by": "BOB_EXECUTE"}
+    try:
+        cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, NULL, PARSE_JSON(?), ?, 'Built', "
+            "ARRAY_CONSTRUCT(?), NULL, PARSE_JSON(?))",
+            params=["Bob: " + target[:70] + " on Snowflake (position)", json.dumps(nar_content), init_id, tag, json.dumps(nar_meta)]).collect()
+        nar_res = str(cr[0][0]) if cr else None
+        try:
+            nar_id = json.loads(nar_res).get("artifact_id") if nar_res else None
+        except Exception:
+            nar_id = nar_res
+    except Exception as e:
+        return {"error": "winner write failed: " + str(e)[:300], "run_id": run_id, "results": results}
+
+    return {"run_id": run_id, "winner_model": winner, "results": results, "narrative_id": nar_id, "audit_ids": audit_ids}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;

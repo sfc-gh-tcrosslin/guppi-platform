@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.6.0 — Engine Seed 01: Schema
+-- guppi-platform v3.7.0 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -101,6 +101,39 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.INITIATIVE_STEPS (
 );
 
 -- =============================================================================
+-- MODEL_CATALOG — INIT-36 foundation-model agnosticism (RULE-023). The set of
+-- models Bob authors with and cross-judges across. ROLE allows future judge-only
+-- models. Adding/removing a model = a row here, never a code change.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.MODEL_CATALOG (
+    MODEL_NAME    VARCHAR(100) NOT NULL PRIMARY KEY,
+    PROVIDER      VARCHAR(50),
+    ROLE          VARCHAR(50)  DEFAULT 'authoring',  -- authoring | judge | both
+    ENABLED       BOOLEAN      DEFAULT TRUE,
+    LAST_VERIFIED TIMESTAMP_NTZ,
+    NOTES         VARCHAR(500)
+);
+-- Seed the verified-callable models (insert-if-missing so re-runs don't clobber toggles).
+MERGE INTO GUPPIWHEEL.PUBLIC.MODEL_CATALOG t
+USING (
+  SELECT 'claude-sonnet-4-5' AS MODEL_NAME, 'Anthropic' AS PROVIDER UNION ALL
+  SELECT 'openai-gpt-4.1', 'OpenAI' UNION ALL
+  SELECT 'llama3.3-70b', 'Meta' UNION ALL
+  SELECT 'mistral-large2', 'Mistral'
+) s ON t.MODEL_NAME = s.MODEL_NAME
+WHEN NOT MATCHED THEN INSERT (MODEL_NAME, PROVIDER, ROLE, ENABLED, LAST_VERIFIED, NOTES)
+  VALUES (s.MODEL_NAME, s.PROVIDER, 'authoring', TRUE, CURRENT_TIMESTAMP(), 'Cortex AI_COMPLETE verified callable');
+
+-- BOB_BAKEOFF_CANDIDATES — working set for Bob's model bake-off (scratch; winners become artifacts).
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.BOB_BAKEOFF_CANDIDATES (
+    RUN_ID      VARCHAR(64),
+    RESEARCH_ID VARCHAR(64),
+    MODEL_NAME  VARCHAR(100),
+    NARRATIVE   VARCHAR,
+    CREATED_AT  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- =============================================================================
 -- PRODUCTS — for Command Center grouping
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PRODUCTS (
@@ -138,7 +171,7 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PLUGIN_VERSION (
 );
 
 MERGE INTO GUPPIWHEEL.PUBLIC.PLUGIN_VERSION t
-USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.6.0' AS VERSION) s
+USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.7.0' AS VERSION) s
 ON t.PLUGIN_NAME = s.PLUGIN_NAME
 WHEN MATCHED THEN UPDATE SET VERSION = s.VERSION, INSTALLED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (PLUGIN_NAME, VERSION) VALUES (s.PLUGIN_NAME, s.VERSION);

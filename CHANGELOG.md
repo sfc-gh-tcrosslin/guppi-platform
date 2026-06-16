@@ -2,6 +2,19 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.7.0] — 2026-06-16
+
+### Feature — Bob, the Building-stage agent (INIT-36)
+
+The missing seat in the cast: Cowork (Initiate) -> Rocky (Research) -> **Bob (Building)** -> Stewart/TARS watch. v1 capability: `RESEARCH -> hypothetical NARRATIVE` (no app/model build).
+
+- **`BOB_AGENT`** (Cortex Agent, `web_search`) — gathers/verifies grounding and surfaces contradictions; authors nothing.
+- **`BOB_EXECUTE`** proc (`EXECUTE AS OWNER`) — assembles grounding (parent RESEARCH + Guppi + Bond + the web brief), authors the same narrative across **all enabled `MODEL_CATALOG` models** via `AI_COMPLETE`, then runs a **cross-judge panel** (every candidate scored by every *other* model — **no model judges its own work**, RULE-023), writes one in-wheel `AUDIT` per candidate (`TARS_AUDITS_V`), and writes the highest-average-trust winner as a `NARRATIVE` with provenance. Mirrors the Rocky agent+proc pattern; writes via `CREATE_ARTIFACT`.
+- **`MODEL_CATALOG`** (minimal STO-36-B) — enabled models for the bake-off; adding/removing a model is a row, never code. Seeded with the verified-callable set (claude-sonnet-4-5, openai-gpt-4.1, llama3.3-70b, mistral-large2).
+- **`RULE-023`** — foundation-model agnosticism: model choice is an auditable, evidence-based decision.
+- First run on `RES-44` (Ferrum): winner claude-sonnet-4-5 (avg trust 0.85) over mistral (0.81), gpt-4.1 (0.81), llama (0.76); 3 independent judges each; zero self-judge violations; conformance gate 4/4 PASS. Uses `AI_COMPLETE` (not the deprecated `SNOWFLAKE.CORTEX.COMPLETE`).
+- v1 stops at the NARRATIVE artifact; HTML rendering reuses the validated `static_html -> @ARTIFACT_ASSETS -> GET_ARTIFACT_LAUNCH` path.
+
 ## [3.6.0] — 2026-06-15
 
 ### Substrate — TARS audits in-wheel (STO-SUBSTRATE-9, 2026-06-16)

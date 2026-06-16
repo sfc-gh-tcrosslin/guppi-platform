@@ -261,3 +261,41 @@ SET stewart_stmt = 'CREATE OR REPLACE AGENT GUPPIWHEEL.PUBLIC.STEWART_AGENT FROM
 EXECUTE IMMEDIATE $stewart_stmt;
 
 GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.STEWART_AGENT TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- BOB_AGENT — Bob's grounding scout (Building-stage agent, INIT-36).
+-- web_search only (no tool_resources, so no warehouse needed, like ROCKY_AGENT).
+-- Returns a grounding/contradiction brief; BOB_EXECUTE does authoring + cross-judge.
+-- =============================================================================
+CREATE OR REPLACE AGENT GUPPIWHEEL.PUBLIC.BOB_AGENT
+FROM SPECIFICATION $$
+models:
+  orchestration: auto
+orchestration:
+  budget:
+    seconds: 300
+    tokens: 100000
+instructions:
+  orchestration: |
+    You are Bob's grounding scout. Given a TARGET and a RESEARCH SUMMARY, use web search to produce a tight GROUNDING BRIEF that Bob will use to author a narrative. Your job is verification, not authoring.
+
+    Do this:
+    1. VERIFY the key claims in the research — confirm, correct, or flag as stale — each with a named source and a date.
+    2. CONFIRM the current state of any Snowflake capabilities relevant to the target (cite product names; note GA vs preview/recent changes).
+    3. SURFACE CONTRADICTIONS between the research and what you find now. State them explicitly; this is the most valuable part.
+
+    Return ONLY this brief as plain text:
+    - VERIFIED FACTS (bullets, each with source + date)
+    - SNOWFLAKE CAPABILITY CONFIRMATIONS (bullets)
+    - CONTRADICTIONS / CORRECTIONS (bullets; write "none found" if so)
+    - OPEN GAPS (what you could not verify)
+
+    Rules: be specific, cite organizations, products, and dates. Do NOT write a narrative or position. Do NOT mention the word Guppi. Return text only.
+  response: Provide the grounding brief as plain text.
+tools:
+  - tool_spec:
+      type: web_search
+      name: web_search
+      description: Search the public web for current, specific information to verify claims and surface contradictions.
+$$;
+GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.BOB_AGENT TO ROLE GUPPIWHEEL_ADMIN;
