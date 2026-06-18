@@ -2,6 +2,12 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.9.1] — 2026-06-18
+
+### Docs — COCO.md "Staying current" (inbound-only update path)
+
+Added a Tier 2 (suggestive) section to `COCO.md` for installs that don't want to share anything back to the source. It tells a consumer's CoCo it *may* check the upstream repo at session start and **offer** (never auto-apply) updates via a one-way `git fetch upstream` — explicitly **no data leaves the account, no telemetry**. Safe because seeds are idempotent/self-healing and the conformance gate re-confirms Tier 0. Core platform only — customer drops stay pinned/reproducible. Consumer side of the recursivity initiative (INIT-46).
+
 ## [3.9.0] — 2026-06-18
 
 ### Feature — bundled `snowflake-mcp` skill (server + client MCP patterns)

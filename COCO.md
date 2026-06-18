@@ -75,3 +75,26 @@ Or just ask **Stewart**: he runs a read-only grounding/hygiene scan and proposes
 See `README.md`. Short version: a warehouse must be active (`USE WAREHOUSE <your_wh>;`), then run the five
 engine seeds in order, then `bootstrap.sql` once on a fresh account, then the viewer. Each `seeds/engine/*.sql`
 file carries a `TIER:` header so you can see, inline, what you may freely re-author.
+
+---
+
+## Staying current (Tier 2 — optional, inbound-only)
+
+You never have to send anything back to get value from Guppi. This drop is a git repo, so the safe way to
+pick up new doctrine, skills, and fixes is a **one-way pull you control** — nothing leaves your account, no
+telemetry, no Bond or artifacts transmitted anywhere.
+
+At session start (or whenever you want), your CoCo *may* check whether the upstream repo is ahead and **offer**
+to apply updates — it should never auto-apply:
+
+```bash
+git fetch upstream && git log HEAD..upstream/main --oneline    # requires an `upstream` remote configured
+```
+
+If upstream is ahead: summarize what changed (read `CHANGELOG.md`), then offer to merge + re-run the seeds.
+Re-running is safe — the seeds are **idempotent and self-healing**, and the **conformance gate** confirms you
+still "got Guppi" afterward. Tier 0 invariants and your Tier 1/2 customizations survive an update.
+
+Prefer to pin a version and never look upstream? Also fine — skip this entirely. The point is that the only
+direction here is *inbound*, on your terms.
+
