@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guppi — What It Is · v3</title>
+<style>
+:root{
+  --bg:#0a0a12;--surface:#12131e;--border:#1e2030;--text:#e2e8f0;--muted:#8888a0;
+  --blue:#29B5E8;--green:#14B8A6;--amber:#F59E0B;--purple:#8B5CF6;--pink:#EC4899;--rose:#F43F5E;--cyan:#06B6D4;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-snap-type:y mandatory;overflow-y:scroll;height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;height:100%}
+section{min-height:100vh;height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:4rem 3rem;position:relative;scroll-snap-align:start;scroll-snap-stop:always;overflow:hidden}
+section:nth-child(even){background:var(--surface)}
+.deck-dots{position:fixed;right:18px;top:50%;transform:translateY(-50%);z-index:1000;display:flex;flex-direction:column;gap:10px;padding:14px 8px;background:rgba(10,10,18,.6);border:1px solid var(--border);border-radius:20px;backdrop-filter:blur(8px)}
+.deck-dots a{width:9px;height:9px;border-radius:50%;background:var(--muted);opacity:.45;transition:all .2s;display:block;position:relative}
+.deck-dots a:hover{opacity:.9;transform:scale(1.2)}
+.deck-dots a[aria-current="true"]{background:var(--blue);opacity:1;transform:scale(1.4);box-shadow:0 0 8px rgba(41,181,232,.6)}
+.deck-dots a::after{content:attr(data-label);position:absolute;right:18px;top:50%;transform:translateY(-50%);background:var(--surface);color:var(--text);font-size:.7rem;padding:4px 10px;border-radius:6px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s;border:1px solid var(--border);font-weight:600}
+.deck-dots a:hover::after{opacity:1}
+@media (max-width:720px){.deck-dots{display:none}}
+h1{font-size:3.6rem;font-weight:900;text-align:center;line-height:1.08;letter-spacing:-.02em}
+h1 .accent{color:var(--blue)}
+h2{font-size:2.2rem;font-weight:700;text-align:center;margin-bottom:1.2rem;letter-spacing:-.01em}
+h2 .accent{color:var(--blue)}
+.kicker{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.16em;margin-bottom:1rem}
+.subtitle{font-size:1.15rem;color:var(--muted);text-align:center;max-width:760px;line-height:1.7;margin-top:.6rem}
+.bold-statement{font-size:1.55rem;font-weight:300;color:var(--text);text-align:center;max-width:820px;line-height:1.55;margin-top:1.4rem}
+.bold-statement strong{color:var(--blue);font-weight:700}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1.4rem;max-width:920px;width:100%;margin-top:2rem}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:1.3rem;max-width:1060px;width:100%;margin-top:2rem}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;max-width:1100px;width:100%;margin-top:1.8rem}
+@media(max-width:820px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:1.6rem;transition:transform .2s,border-color .2s}
+section:nth-child(even) .card{background:var(--surface)}
+.card:hover{transform:translateY(-2px);border-color:var(--blue)}
+.card-title{font-size:1rem;font-weight:700;margin-bottom:.55rem}
+.card-desc{font-size:.82rem;color:var(--muted);line-height:1.6}
+.card-impact{font-size:.74rem;color:var(--green);font-weight:600;margin-top:.7rem}
+.pill-row{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;max-width:900px;margin-top:1.6rem}
+.tpill{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:999px;padding:.35rem .85rem;font-size:.78rem;color:var(--text);letter-spacing:.01em}
+.tpill b{color:var(--blue)}
+.tpill.out{border-color:var(--pink);color:var(--pink)}
+.lifecycle{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;justify-content:center;margin-top:1.6rem;max-width:900px}
+.lc-step{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:.7rem 1.1rem;font-size:.85rem;font-weight:600}
+section:nth-child(even) .lc-step{background:var(--surface)}
+.lc-arrow{color:var(--muted);font-size:1rem}
+.lc-step.s0{border-top:2px solid var(--amber);color:var(--amber)}
+.lc-step.s1{border-top:2px solid var(--blue);color:var(--blue)}
+.lc-step.s2{border-top:2px solid var(--purple);color:var(--purple)}
+.lc-step.s3{border-top:2px solid var(--green);color:var(--green)}
+.lc-step.s4{border-top:2px solid var(--cyan);color:var(--cyan)}
+.lc-step.o{border-top:2px solid var(--pink);color:var(--pink)}
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;max-width:900px;width:100%;margin-top:2rem}
+.kpi{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:1rem 1.2rem;text-align:center}
+section:nth-child(even) .kpi{background:var(--surface)}
+.kpi .n{font-size:1.8rem;font-weight:800;color:var(--blue)}
+.kpi .l{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:.3rem}
+.rule-group{margin-top:1.4rem;max-width:1080px;width:100%}
+.rule-group h3{font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:1.1rem 0 .6rem;text-align:left}
+.rule-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:.7rem}
+@media(max-width:820px){.rule-grid{grid-template-columns:1fr}}
+.rule{background:var(--bg);border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:8px;padding:.7rem 1rem}
+section:nth-child(even) .rule{background:var(--surface)}
+.rule .id{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:.7rem;color:var(--blue);font-weight:700}
+.rule .t{font-size:.86rem;font-weight:600;margin:.15rem 0 .2rem}
+.rule .d{font-size:.76rem;color:var(--muted);line-height:1.5}
+.rule.gov{border-left-color:var(--rose)}.rule.gov .id{color:var(--rose)}
+.rule.dist{border-left-color:var(--green)}.rule.dist .id{color:var(--green)}
+.rule.integ{border-left-color:var(--purple)}.rule.integ .id{color:var(--purple)}
+.agent-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1.1rem;max-width:1100px;width:100%;margin-top:1.8rem}
+@media(max-width:820px){.agent-grid{grid-template-columns:1fr 1fr}}
+.agent{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:1.4rem;border-top:2px solid var(--blue)}
+section:nth-child(even) .agent{background:var(--surface)}
+.agent.a-rocky{border-top-color:var(--amber)} .agent.a-cowork{border-top-color:var(--blue)}
+.agent.a-tars{border-top-color:var(--purple)} .agent.a-stewart{border-top-color:var(--green)}
+.agent .nm{font-size:1.1rem;font-weight:800}
+.agent .ro{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:.2rem 0 .7rem}
+.agent .ds{font-size:.8rem;color:var(--muted);line-height:1.55}
+.agent .new{display:inline-block;font-size:.6rem;font-weight:700;letter-spacing:.08em;background:rgba(20,184,166,.15);color:var(--green);padding:.1rem .45rem;border-radius:8px;margin-left:.4rem;vertical-align:middle}
+.wheel-wrap{position:relative;width:min(620px,72vh);height:min(620px,72vh);margin:.4rem auto .8rem}
+.wheel-wrap canvas{width:100%;height:100%;display:block}
+.wheel-vocab{margin-top:.6rem;max-width:780px;text-align:center;color:var(--text);font-size:1rem;line-height:1.7}
+.wheel-vocab b{color:var(--blue)}.wheel-vocab .lp{color:var(--green)}
+.hero-canvas{width:100%;max-width:1040px;height:520px;position:relative;margin-bottom:1.2rem}
+.hero-canvas svg{width:100%;height:100%;display:block}
+.hero-callout{text-align:center;max-width:880px;font-size:2.6rem;font-weight:300;line-height:1.25;margin-bottom:.6rem}
+.hero-callout .accent{color:var(--blue);font-weight:700}
+.hero-handnote{font-family:"Caveat","Patrick Hand",cursive;font-size:1.15rem;color:var(--muted);text-align:center}
+.hero-handnote .arrow{color:var(--blue)}
+.final p{font-size:1.05rem;color:var(--muted);line-height:1.85;margin-top:1rem;max-width:720px}
+.final .big{color:var(--text);font-weight:600;font-size:1.25rem;margin-top:1.4rem}
+.proof{color:var(--text);line-height:1.9;margin-top:1.6rem;text-align:left;font-size:.95rem;border-left:2px solid var(--blue);padding-left:1.2rem;max-width:760px}
+.proof .hl{color:var(--blue);font-weight:600}
+footer{padding:2.4rem 3rem;text-align:center;color:var(--muted);font-size:.78rem;border-top:1px solid var(--border);background:var(--bg)}
+code{color:var(--blue);font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:.92em}
+</style>
+</head>
+<body>
+
+<!-- 00 HERO -->
+<section id="sec-00" style="padding-top:3rem;padding-bottom:3rem">
+<div class="kicker">Guppi &middot; v3 &middot; what it is</div>
+<div class="hero-canvas">
+  <svg viewBox="0 0 1040 520" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <filter id="wob" x="-2%" y="-2%" width="104%" height="104%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="5"/>
+        <feDisplacementMap in="SourceGraphic" scale="1.5"/>
+      </filter>
+      <radialGradient id="spark" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#fff" stop-opacity="0.95"/>
+        <stop offset="22%" stop-color="#7DD3FC" stop-opacity="0.85"/>
+        <stop offset="55%" stop-color="#29B5E8" stop-opacity="0.32"/>
+        <stop offset="100%" stop-color="#14B8A6" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <g filter="url(#wob)"><path d="M 520 260 C 470 165, 280 120, 235 260 C 280 400, 470 355, 520 260 Z" fill="none" stroke="#14B8A6" stroke-width="3" stroke-linejoin="round"/></g>
+    <g filter="url(#wob)"><path d="M 520 260 C 570 165, 760 120, 805 260 C 760 400, 570 355, 520 260 Z" fill="none" stroke="#29B5E8" stroke-width="3" stroke-linejoin="round"/></g>
+    <text x="375" y="95" text-anchor="middle" font-family="Caveat, cursive" font-size="40" fill="#14B8A6" font-weight="700">HUMAN</text>
+    <text x="665" y="95" text-anchor="middle" font-family="Caveat, cursive" font-size="40" fill="#29B5E8" font-weight="700">AGENTS</text>
+    <g font-family="Caveat, cursive" font-size="18" fill="#8888a0">
+      <text x="210" y="200" text-anchor="middle">domain</text>
+      <text x="195" y="265" text-anchor="middle">corrections</text>
+      <text x="300" y="405" text-anchor="middle">lived experience</text>
+    </g>
+    <g font-family="Caveat, cursive" font-size="18" fill="#8888a0">
+      <text x="835" y="200" text-anchor="middle">always-on</text>
+      <text x="845" y="265" text-anchor="middle">verify</text>
+      <text x="740" y="405" text-anchor="middle">compound</text>
+    </g>
+    <circle cx="520" cy="260" r="34" fill="url(#spark)"/>
+    <circle cx="520" cy="260" r="5" fill="#fff"/><circle cx="520" cy="260" r="3" fill="#7DD3FC"/>
+    <text x="520" y="345" text-anchor="middle" font-family="Caveat, cursive" font-size="30" fill="#e2e8f0" font-weight="700">GUPPI</text>
+    <text x="520" y="368" text-anchor="middle" font-family="Caveat, cursive" font-size="14" fill="#8888a0">born where human + agents meet</text>
+  </svg>
+</div>
+<div class="hero-callout">Meet <span class="accent">Guppi</span>.<br>Your team's work becomes memory &mdash; and memory becomes leverage.</div>
+<div class="hero-handnote"><span class="arrow">&uarr;</span> humans teach, agents run, Guppi remembers &middot; it runs on an engine called the GuppiWheel &middot; scroll on</div>
+</section>
+
+<!-- 01 THESIS -->
+<section id="sec-01">
+<div class="kicker">01 &middot; the idea</div>
+<h2>Same engine. <span class="accent">Different mind.</span></h2>
+<p class="subtitle">Most software is objective: same bytes, every install, no opinion. GuppiWheel is subjective &mdash; the same engine, but every instance accretes its owner's corrections, domain, and lived experience.</p>
+<div class="grid-2">
+  <div class="card"><div class="card-title" style="color:var(--amber)">Objective &middot; code</div><div class="card-desc">Same bytes, every clone, no memory. Fine for software. An engine update can clobber what you taught it. Knowledge lives in people's heads and leaves when they do.</div><div class="card-impact" style="color:var(--amber)">One truth. No ownership. Ages out.</div></div>
+  <div class="card"><div class="card-title" style="color:var(--green)">Subjective &middot; the wheel</div><div class="card-desc">Every output is an artifact in your own Snowflake account. Corrections become permanent memory. The engine is additive-only &mdash; updates never overwrite what you taught it. The audit trail is yours, and unreproducible.</div><div class="card-impact">Many lived experiences. Owned. Compounds.</div></div>
+</div>
+<div class="bold-statement">It isn't a repo you clone.<br>It's an <strong>engine that remembers</strong>.</div>
+</section>
+
+<!-- 02 MEET THE WHEEL -->
+<section id="sec-02">
+<div class="kicker">02 &middot; the reveal</div>
+<h2>Guppi runs on a <span class="accent">wheel</span></h2>
+<p class="subtitle" style="margin-bottom:.2rem">Under the friendly name is a real engine &mdash; the <b>GuppiWheel</b>.</p>
+<div class="wheel-wrap"><canvas id="wheelCanvas"></canvas></div>
+<div class="wheel-vocab" style="margin-top:1rem">
+One trip around is a <b style="color:var(--blue)">spin</b> &mdash; the five stages orbiting the <b style="color:var(--pink)">outcome</b> at the hub. A <span class="lp"><b>loop</b></span> is a spin that proved out and got packaged: the thing a customer subscribes to. Outputs are the orbit; the outcome is the point.<br>
+<span style="color:var(--muted);font-size:.88rem;font-style:italic">Stages are enforced in code, not convention &mdash; nothing advances until the gate is satisfied.</span>
+</div>
+</section>
+
+<!-- 03 ARTIFACT TYPES -->
+<section id="sec-03">
+<div class="kicker">03 &middot; one table, every kind of work</div>
+<h2>It all lives in <span class="accent">one table</span></h2>
+<p class="subtitle">No parallel registries. Initiatives, research, stories, apps, narratives, defects, audits &mdash; every kind of work is a row in <code>GUPPIWHEEL.PUBLIC.ARTIFACTS</code>, with one lifecycle, one audit trail, one source of truth.</p>
+<div class="pill-row">
+  <span class="tpill"><b>INITIATIVE</b></span><span class="tpill"><b>RESEARCH</b></span><span class="tpill"><b>STORY</b></span>
+  <span class="tpill"><b>EPIC</b></span><span class="tpill"><b>APP</b></span><span class="tpill"><b>MODEL</b></span>
+  <span class="tpill"><b>DASHBOARD</b></span><span class="tpill"><b>NARRATIVE</b></span><span class="tpill"><b>DEFECT</b></span>
+  <span class="tpill"><b>INCIDENT</b></span><span class="tpill"><b>AUDIT</b></span><span class="tpill"><b>SKILL</b></span>
+  <span class="tpill out"><b>OUTCOME</b> &middot; new</span>
+</div>
+<div class="kpi-strip">
+  <div class="kpi"><div class="n">403</div><div class="l">Artifacts</div></div>
+  <div class="kpi"><div class="n">11</div><div class="l">Types live</div></div>
+  <div class="kpi"><div class="n">36</div><div class="l">Narratives</div></div>
+  <div class="kpi"><div class="n">10</div><div class="l">Trust audits</div></div>
+</div>
+<p class="subtitle" style="margin-top:1.3rem;font-size:.85rem">Live state of the wheel that produced this page.</p>
+</section>
+
+<!-- 04 OUTCOMES (NEW) -->
+<section id="sec-04">
+<div class="kicker">04 &middot; newest to the wheel</div>
+<h2>From outputs to <span class="accent" style="color:var(--pink)">outcomes</span></h2>
+<div class="bold-statement">Most systems ship <em>outputs</em> &mdash; a dashboard, a model, a brief &mdash; and stop. The wheel now closes the loop to the <strong style="color:var(--pink)">outcome</strong>: did it actually change the world?</div>
+<p class="subtitle" style="margin-top:1.4rem">OUTCOME is a first-class artifact type with its own lifecycle &mdash; a target is stated <em>before</em> the work, committed to, wired to live data, then measured against reality.</p>
+<div class="lifecycle">
+  <span class="lc-step o">ASPIRATIONAL</span><span class="lc-arrow">&rarr;</span>
+  <span class="lc-step o">SELECTED</span><span class="lc-arrow">&rarr;</span>
+  <span class="lc-step o">TRACKED</span><span class="lc-arrow">&rarr;</span>
+  <span class="lc-step o">RESOLVED</span>
+</div>
+<p class="subtitle" style="margin-top:1.4rem;font-size:.9rem"><b style="color:var(--pink)">ASPIRATIONAL</b> the target, stated up front &nbsp;&middot;&nbsp; <b style="color:var(--pink)">SELECTED</b> a decision-maker commits &nbsp;&middot;&nbsp; <b style="color:var(--pink)">TRACKED</b> wired to a live signal (a query, a metric, a URL) &nbsp;&middot;&nbsp; <b style="color:var(--pink)">RESOLVED</b> measured against the world.</p>
+<p class="subtitle" style="margin-top:.8rem;font-size:.85rem;font-style:italic">An outcome doesn't get to claim RESOLVED until its pointer resolves to real data or a human signs off. Aspiration is cheap; the wheel makes you pay it off.</p>
+</section>
+
+<!-- 05 THE RULES -->
+<section id="sec-05" style="padding-top:3rem;padding-bottom:3rem">
+<div class="kicker">05 &middot; the doctrine</div>
+<h2>The rules <span class="accent">are</span> the engine</h2>
+<p class="subtitle" style="margin-bottom:.4rem">28 rules, enforced in code &mdash; not a style guide. Anyone can hire AI agents. Few adopt the operational doctrine that makes them compound without corrupting.</p>
+
+<div class="rule-group">
+  <h3 style="color:var(--blue)">Foundation &mdash; how work enters the wheel</h3>
+  <div class="rule-grid">
+    <div class="rule"><div class="id">RULE-013</div><div class="t">Headless First</div><div class="d">Every output is a queryable artifact before any render. If it isn't in the table, it doesn't exist.</div></div>
+    <div class="rule"><div class="id">RULE-014</div><div class="t">Status Ownership</div><div class="d">The actor that owns a transition sets the status. Submitters initiate; agents advance; humans sign off.</div></div>
+    <div class="rule"><div class="id">RULE-017</div><div class="t">Separation of Execution</div><div class="d">Cowork dispatches, Rocky researches. Agents don't cross boundaries &mdash; that's how loops are prevented.</div></div>
+    <div class="rule"><div class="id">RULE-018</div><div class="t">Launchables Live in the Wheel</div><div class="d">Apps, dashboards, narratives carry one launch shape. Bytes live on the stage, never in a local path.</div></div>
+  </div>
+
+  <h3 style="color:var(--purple)">Integrity &mdash; the substrate stays true</h3>
+  <div class="rule-grid">
+    <div class="rule integ"><div class="id">RULE-019</div><div class="t">Engine Additive-Only</div><div class="d">No drops, no renames, no breaking changes. Your corrections accrete forever &mdash; "we never break your stuff," enforced by code.</div></div>
+    <div class="rule integ"><div class="id">RULE-025</div><div class="t">Serving Shows Current Truth</div><div class="d">Consumer surfaces index only non-superseded artifacts. Supersede with a pointer, never delete. History stays queryable.</div></div>
+    <div class="rule integ"><div class="id">RULE-026</div><div class="t">Grounding Sweep</div><div class="d">A doctrine change isn't done until every grounding surface is swept &mdash; rules, semantic views, search, agents, docs, memory.</div></div>
+    <div class="rule integ"><div class="id">RULE-029</div><div class="t">Artifact IDs Are Unique</div><div class="d">All creation flows through one gated write path that allocates atomically and refuses duplicates. Snowflake won't enforce it &mdash; the wheel does.</div></div>
+    <div class="rule integ"><div class="id">RULE-016</div><div class="t">No Self-Spawning</div><div class="d">No agent holds a tool that creates work for itself. If it could re-invoke itself, it would loop. So it can't.</div></div>
+    <div class="rule integ"><div class="id">RULE-020</div><div class="t">Initiative-vs-Research Lineage</div><div class="d">One goal is one initiative; iterations are research children under it. Keeps the lineage legible, not sprawled.</div></div>
+  </div>
+
+  <h3 style="color:var(--green)">Distribution &mdash; how the wheel travels</h3>
+  <div class="rule-grid">
+    <div class="rule dist"><div class="id">RULE-021</div><div class="t">Share Composition</div><div class="d">Shares carry concepts, not bytes &mdash; framework by default, exemplars by explicit curation. Customer-private content never leaves.</div></div>
+    <div class="rule dist"><div class="id">RULE-015</div><div class="t">Collaboration Tags</div><div class="d">Route work to a person by tagging them; they discover it on their next session. A pull model, not a ping.</div></div>
+  </div>
+
+  <h3 style="color:var(--rose)">Governance &mdash; who is allowed to change what</h3>
+  <div class="rule-grid">
+    <div class="rule gov"><div class="id">RULE-024</div><div class="t">Secrets Hygiene</div><div class="d">Credentials come from strict env/SECRET, never literals. Repo-wide grep returns zero. Born from a real leak we fixed.</div></div>
+    <div class="rule gov"><div class="id">RULE-028</div><div class="t">Procedure-Mediated Writes</div><div class="d">No role below admin holds direct DML. Writes flow through owner-procs; doctrine is admin-only. The lockdown ships born-locked.</div></div>
+    <div class="rule gov"><div class="id">RULE-027</div><div class="t">Doctrine Authority Is Orchestrator-Only</div><div class="d">Sub-agents operate within doctrine: they propose via artifacts, never write rules. Only the orchestrator decides.</div></div>
+  </div>
+</div>
+</section>
+
+<!-- 06 THE CAST / AGENTS -->
+<section id="sec-06">
+<div class="kicker">06 &middot; what runs the wheel</div>
+<h2>The <span class="accent">cast</span></h2>
+<p class="subtitle">Server-side Snowflake agents, each with one job and a hard boundary. They keep the wheel turning without a human at the crank.</p>
+<div class="agent-grid">
+  <div class="agent a-rocky"><div class="nm">Rocky</div><div class="ro">Autonomous research</div><div class="ds">Every 5 minutes, picks up a queued initiative, researches it on the open web, and writes the findings back as an artifact. Web search only &mdash; never spawns its own work.</div></div>
+  <div class="agent a-cowork"><div class="nm">Cowork</div><div class="ro">Dispatch &amp; ask-the-wheel</div><div class="ds">The conversational front door. Submits initiatives, advances stages through the rules engine, and answers questions about the wheel in natural language via Cortex Analyst.</div></div>
+  <div class="agent a-tars"><div class="nm">TARS</div><div class="ro">Independent audit</div><div class="ds">Scores trust on a <em>different</em> model than the builder &mdash; adversarial by construction. Three-vote: the builder recommends, TARS verifies, the human decides.</div></div>
+  <div class="agent a-stewart"><div class="nm">Stewart <span class="new">NEW</span></div><div class="ro">Grounding steward</div><div class="ds">Watches the substrate for drift &mdash; duplicates, orphans, dead references &mdash; and <em>proposes</em> fixes. It cannot change doctrine; it has no tool that writes rules. It even watches its own builder.</div></div>
+</div>
+<p class="subtitle" style="margin-top:1.6rem;font-size:.92rem">The boundary is structural, not a promise. A sub-agent <strong style="color:var(--text)">can't</strong> change doctrine because it has no capability to &mdash; only the orchestrator and the human do. <span style="color:var(--blue)">Propose, verify, decide.</span></p>
+</section>
+
+<!-- 07 RECURSIVE PROOF -->
+<section id="sec-07">
+<div class="kicker">07 &middot; the proof</div>
+<div class="final" style="text-align:center;max-width:760px">
+<h2>Built on <span class="accent">itself</span></h2>
+<p>GuppiWheel is built using GuppiWheel. This page is an artifact. The rules were exercised on their authors first &mdash; we caught ourselves violating headless-first and shipped the recursive fix in one session.</p>
+<div class="proof">
+On Stewart's very first scan, it caught a bug in the code that builds the wheel &mdash; a write the orchestrator itself had made &mdash; and filed a proposed fix. The detective caught its own creator. The boundary held: it proposed, it did not change a thing.<br><br>
+<span class="hl">The proof isn't a claim. It's in the wheel, queryable, with an audit trail.</span>
+</div>
+<p class="big">The rules are the moat &mdash; not the bots.<br>Earned. Owned. Compounding.</p>
+</div>
+</section>
+
+<!-- 08 CLOSE -->
+<section id="sec-08">
+<div class="kicker">08 &middot; in one line</div>
+<h1>That's <span class="accent">Guppi</span>.</h1>
+<p class="subtitle" style="margin-top:1.8rem">One table. One lifecycle. 28 rules in code. Four agents turning the wheel &mdash; every spin pointing at the outcome. It's all yours, in your own account, unreproducible by anyone who didn't live it.</p>
+<div class="hero-handnote" style="margin-top:1.8rem">Guppi runs on the GuppiWheel. <span class="arrow">&uarr;</span> back to the top of the infinity.</div>
+</section>
+
+<nav class="deck-dots" aria-label="Section navigation">
+  <a href="#sec-00" data-label="What it is"></a>
+  <a href="#sec-01" data-label="The idea"></a>
+  <a href="#sec-02" data-label="Meet the wheel"></a>
+  <a href="#sec-03" data-label="One table"></a>
+  <a href="#sec-04" data-label="Outcomes"></a>
+  <a href="#sec-05" data-label="The rules"></a>
+  <a href="#sec-06" data-label="The cast"></a>
+  <a href="#sec-07" data-label="The proof"></a>
+  <a href="#sec-08" data-label="In one line"></a>
+</nav>
+
+<footer>
+Guppi &middot; v3 &middot; what it is &middot; runs on the GuppiWheel engine &middot; authored through the wheel it describes &middot; <code>guppi-platform v3.6.0</code> &middot; 403 artifacts &middot; 28 rules &middot; agents: Rocky &middot; Cowork &middot; TARS &middot; Stewart
+</footer>
+
+<script>
+(function(){
+  const dots=document.querySelectorAll('.deck-dots a');
+  const sections=Array.from(document.querySelectorAll('section[id^="sec-"]'));
+  const byId={};dots.forEach(d=>byId[d.getAttribute('href').slice(1)]=d);
+  const io=new IntersectionObserver(es=>{let top=null;es.forEach(e=>{if(e.isIntersecting){if(!top||e.intersectionRatio>top.intersectionRatio)top=e;}});if(top){dots.forEach(d=>d.removeAttribute('aria-current'));if(byId[top.target.id])byId[top.target.id].setAttribute('aria-current','true');}},{threshold:[0.3,0.6]});
+  sections.forEach(s=>io.observe(s));
+  document.addEventListener('keydown',e=>{
+    if(['ArrowDown','PageDown',' '].includes(e.key)){e.preventDefault();go(1);}
+    else if(['ArrowUp','PageUp'].includes(e.key)){e.preventDefault();go(-1);}
+  });
+  function go(d){const cur=document.querySelector('.deck-dots a[aria-current="true"]');let i=cur?Array.from(dots).indexOf(cur):0;i=Math.max(0,Math.min(sections.length-1,i+d));sections[i].scrollIntoView({behavior:'smooth'});}
+})();
+
+/* Animated wheel — 5-stage lifecycle */
+(function(){
+  const canvas=document.getElementById('wheelCanvas');if(!canvas)return;
+  const ctx=canvas.getContext('2d');let running=false,rafId=null,t=0,cx,cy,radius;
+  function size(){const dpr=window.devicePixelRatio||1;const r=canvas.getBoundingClientRect();canvas.width=r.width*dpr;canvas.height=r.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);cx=r.width/2;cy=r.height/2;radius=Math.min(cx,cy)*0.66;}
+  size();window.addEventListener('resize',size);
+  const stages=[
+    {name:'Initiate',color:'#F59E0B'},
+    {name:'Research',color:'#29B5E8'},
+    {name:'Building',color:'#8B5CF6'},
+    {name:'Built',color:'#14B8A6'},
+    {name:'Narrated',color:'#06B6D4'}
+  ].map((s,i)=>({...s,angle:-Math.PI/2+i*2*Math.PI/5}));
+  const particles=[];const ripples=[];
+  function respawn(p){p.rf=1.28-Math.random()*0.16;p.angle=Math.random()*6.283;p.speed=0.006+Math.random()*0.006;p.inward=0.0011+Math.random()*0.0013;p.size=2+Math.random()*2.2;p.trail=[];p.pulse=Math.random()*6.28;}
+  for(let i=0;i<32;i++){const p={};respawn(p);p.rf=0.2+Math.random()*1.06;particles.push(p);}
+  function draw(){
+    if(!running)return;
+    const w=canvas.width/(window.devicePixelRatio||1),h=canvas.height/(window.devicePixelRatio||1);
+    ctx.fillStyle='rgba(10,10,18,0.18)';ctx.fillRect(0,0,w,h);t+=0.016;
+    for(let r=0.72;r<=1.18;r+=0.15){ctx.beginPath();ctx.arc(cx,cy,radius*r,0,6.283);ctx.strokeStyle='rgba(42,45,58,0.4)';ctx.lineWidth=0.5;ctx.stroke();}
+    ctx.beginPath();ctx.arc(cx,cy,radius,0,6.283);ctx.strokeStyle='rgba(41,181,232,0.22)';ctx.lineWidth=2;ctx.stroke();
+    stages.forEach((s,i)=>{
+      const x=cx+Math.cos(s.angle)*radius,y=cy+Math.sin(s.angle)*radius;
+      const g=ctx.createRadialGradient(x,y,0,x,y,54);g.addColorStop(0,s.color+'40');g.addColorStop(1,'transparent');
+      ctx.fillStyle=g;ctx.fillRect(x-54,y-54,108,108);
+      ctx.beginPath();ctx.arc(x,y,30+4*Math.sin(t*1.5+i),0,6.283);ctx.fillStyle=s.color+'30';ctx.fill();ctx.strokeStyle=s.color;ctx.lineWidth=1.6;ctx.stroke();
+      ctx.fillStyle=s.color;ctx.font='bold 12px "SF Pro Display",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(s.name,x,y);
+    });
+    const sa=-Math.PI/2+t*0.4,sx=cx+Math.cos(sa)*radius,sy=cy+Math.sin(sa)*radius;
+    for(let i=0;i<26;i++){const ta=sa-i*0.04,tx=cx+Math.cos(ta)*radius,ty=cy+Math.sin(ta)*radius;ctx.beginPath();ctx.arc(tx,ty,4-i*0.1,0,6.283);ctx.fillStyle=`rgba(41,181,232,${(1-i/26)*0.7})`;ctx.fill();}
+    ctx.beginPath();ctx.arc(sx,sy,6,0,6.283);ctx.fillStyle='#29B5E8';ctx.fill();
+    ctx.fillStyle='rgba(41,181,232,0.95)';ctx.font='bold 12px "SF Pro Display",sans-serif';ctx.textAlign='center';ctx.fillText('SPIN',sx,sy-17);
+    particles.forEach(p=>{
+      p.angle+=p.speed;p.pulse+=0.05;p.rf-=p.inward;
+      const o=radius*p.rf;const px=cx+Math.cos(p.angle)*o,py=cy+Math.sin(p.angle)*o;
+      const band=Math.min(0.999,Math.max(0,1-(p.rf-0.19)/(1.28-0.19)));
+      const col=stages[Math.min(4,Math.floor(band*5))].color;
+      const fade=Math.max(0,Math.min(1,(p.rf-0.19)/0.14));
+      p.trail.push({x:px,y:py});if(p.trail.length>9)p.trail.shift();
+      for(let i=0;i<p.trail.length-1;i++){const a=i/p.trail.length*0.4*fade;ctx.beginPath();ctx.moveTo(p.trail[i].x,p.trail[i].y);ctx.lineTo(p.trail[i+1].x,p.trail[i+1].y);ctx.strokeStyle=col+Math.floor(a*255).toString(16).padStart(2,'0');ctx.lineWidth=p.size*0.5;ctx.stroke();}
+      ctx.globalAlpha=fade;
+      ctx.beginPath();ctx.arc(px,py,p.size*(0.8+0.2*Math.sin(p.pulse)),0,6.283);ctx.fillStyle=col;ctx.fill();
+      ctx.globalAlpha=1;
+      if(p.rf<=0.19){ripples.push({a:0.9});respawn(p);}
+    });
+    for(let i=ripples.length-1;i>=0;i--){const rp=ripples[i];rp.a-=0.03;const rr=radius*0.19*(1.5-rp.a);ctx.beginPath();ctx.arc(cx,cy,rr,0,6.283);ctx.strokeStyle=`rgba(236,72,153,${Math.max(0,rp.a*0.55)})`;ctx.lineWidth=1.4;ctx.stroke();if(rp.a<=0)ripples.splice(i,1);}
+    // OUTCOME at the hub — the five stages orbit the thing they exist to produce
+    const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,radius*0.36);
+    cg.addColorStop(0,'rgba(236,72,153,0.22)');cg.addColorStop(0.6,'rgba(236,72,153,0.06)');cg.addColorStop(1,'transparent');
+    ctx.fillStyle=cg;ctx.beginPath();ctx.arc(cx,cy,radius*0.36,0,6.283);ctx.fill();
+    ctx.beginPath();ctx.arc(cx,cy,radius*0.19+2*Math.sin(t*1.5),0,6.283);ctx.strokeStyle='rgba(236,72,153,0.5)';ctx.lineWidth=1.4;ctx.stroke();
+    ctx.fillStyle='#EC4899';ctx.font='bold 18px "SF Pro Display",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('OUTCOME',cx,cy-7);
+    ctx.font='10px "SF Pro Display",sans-serif';ctx.fillStyle='rgba(136,136,160,0.8)';ctx.fillText('every spin points here',cx,cy+14);
+    rafId=requestAnimationFrame(draw);
+  }
+  const sec=document.getElementById('sec-02');
+  new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting&&!running){running=true;size();draw();}else if(!e.isIntersecting&&running){running=false;if(rafId)cancelAnimationFrame(rafId);}});},{threshold:0.2}).observe(sec);
+})();
+</script>
+</body>
+</html>

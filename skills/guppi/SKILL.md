@@ -2,7 +2,7 @@
 
 > Plan work. Do work. Track work. Verify work. Remember everything.
 
-GUPPI is an AI-native SDLC + Ops + QA platform running entirely in Snowflake. One queryable database replaces Jira, ServiceNow, PagerDuty, and manual QA.
+GUPPI is an AI-native SDLC + Ops + QA platform running entirely in Snowflake. GUPPI is your place to track your full AI lifecycle.
 
 ## Running the viewer
 
