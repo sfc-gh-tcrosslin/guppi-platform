@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.9.0] — 2026-06-18
+
+### Feature — bundled `snowflake-mcp` skill (server + client MCP patterns)
+
+Added a reusable skill capturing the Snowflake-managed MCP playbook, so building/consuming MCP servers is twice-learned, not re-learned. Born out of the Adonis RCM MVP build.
+
+- **`skills/snowflake-mcp/SKILL.md`** — SERVER: `CREATE MCP SERVER` over Cortex Analyst (semantic views, not model files), Cortex Search, Agents, UDFs/procs; the "grant the server AND each tool object" rule; sessions use `DEFAULT_ROLE` (no secondary roles) so RLS flows through; hyphens-not-underscores; read-only posture. CLIENT: JSON-RPC `tools/list`/`tools/call`; the **exact** parse everyone gets wrong — `CORTEX_ANALYST_MESSAGE` returns `content[].text` as a JSON string → array, with `obj.statement` (SQL), `obj.text` (answer), `obj.suggestions`; SQL-API execution + async polling; client-side read-only guardrail; "don't stringify-regex the response" trap.
+- Auto-discovered via the existing `"skills": ["./skills"]` manifest entry; no engine/DDL change (seed engine version stays 3.8.1).
+- Encodes the session's process correction: **check the referenced prior art before writing a fix from scratch.**
+
 ## [3.8.1] — 2026-06-18
 
 ### Refactor — one artifact write chokepoint + agent-callable scalar surface
