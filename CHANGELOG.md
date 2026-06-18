@@ -2,6 +2,20 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.8.1] — 2026-06-18
+
+### Refactor — one artifact write chokepoint + agent-callable scalar surface
+
+Consolidated the artifact write path onto a single procedure and made it directly callable by Cortex agents. Answers "why do we need two artifact functions?" — now there is exactly one writer; everything else delegates.
+
+- **`CREATE_ARTIFACT` is the sole INSERT path (RULE-029).** `PUBLISH_ARTIFACT`, `SUBMIT_INITIATIVE`, `ROCKY_EXECUTE`, `STEWART_AUDIT`, `PROPOSE_CORRECTION`, and `BOB_EXECUTE` now validate/shape their payload and **delegate** the INSERT by `CALL`ing `CREATE_ARTIFACT` — no proc does its own `INSERT INTO ARTIFACTS` anymore.
+- **All-scalar surface.** `CREATE_ARTIFACT` (and `PUBLISH_ARTIFACT`) now take JSON **strings** for `P_CONTENT`/`P_TAGS`/`P_METADATA`/`P_LAUNCH_SPEC` instead of `VARIANT`/`ARRAY`. Cortex agent generic tools over a warehouse execution environment **cannot pass `object`/`array` argument types** — this was the real cause of the earlier `publish_artifact` "launch specification not compatible with the execution environment" failure. The proc parses JSON internally.
+- **Cowork gains a `create_artifact` tool** for non-launchable artifacts (RESEARCH findings, STORY, EPIC, OUTCOME). `publish_artifact` stays for launchables (a launch spec). This is how a research finding now lands under an initiative (e.g. `P_PARENT_ID=INIT-29`) — verified end-to-end through the live agent.
+- **`RESEARCH` is now an allocatable series** (`RES-N`) for ad-hoc/Cowork research; Rocky still uses explicit `RES-<init>-ROCKY`.
+- **`NULLIF(?, 'None')` guard** on `PRODUCT_ID` (and `PARENT_ID`) — Snowpark binds Python `None` as the string `'None'`; the chokepoint normalizes it to SQL `NULL`.
+- **Doctrine sweep:** `RULE-029`/`RULE-028` messages reconciled (single chokepoint; wrappers delegate). **`RULES.MESSAGE` widened `VARCHAR(1000)` → `VARCHAR(4000)`** (self-heal `ALTER`) — long doctrine messages (RULE-026/028) were silently stubbed at 1000 on older installs.
+- Conformance gate 5/5 PASS; launchable publish + `GET_ARTIFACT_LAUNCH` verified.
+
 ## [3.8.0] — 2026-06-17
 
 ### Feature — guppi as a controlled product + per-product share boundary (STO-SUBSTRATE-8)

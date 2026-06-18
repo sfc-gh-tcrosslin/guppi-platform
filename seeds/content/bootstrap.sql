@@ -8,7 +8,7 @@
 INSERT INTO GUPPIWHEEL.PUBLIC.ID_CONVENTIONS (ENTITY, NEXT_SEQ, ID_PREFIX, NOTES)
 SELECT * FROM VALUES
     ('INITIATIVE', 1, 'INIT-', 'Global INIT-N artifact IDs'),
-    ('RESEARCH',   1, NULL,    'Rocky uses RES-<init>-ROCKY (collision-guarded); not auto-allocated'),
+    ('RESEARCH',   1, 'RES-',  'Generic RES-N for ad-hoc/Cowork research; Rocky additionally uses explicit RES-<init>-ROCKY (collision-guarded)'),
     ('STORY',      1, NULL,    'Stories are product-scoped: STORY_<PRODUCT> rows registered per product'),
     ('EPIC',       1, 'E-',    'Global E-N artifact IDs'),
     ('NARRATIVE',  1, 'NAR-',  'Global NAR-N artifact IDs'),

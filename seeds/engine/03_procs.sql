@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.8.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.8.1 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -83,20 +83,32 @@ CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(
   "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR
 )
 RETURNS VARCHAR
-LANGUAGE SQL
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
 EXECUTE AS OWNER  -- RULE-028: procedure-mediated write; runs as owner so contributors need no direct ARTIFACTS DML
 AS
-BEGIN
-    -- atomic allocation (RULE-029): increment first, then read, so concurrent calls cannot collide
-    UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = NEXT_SEQ + 1 WHERE ENTITY = 'INITIATIVE';
-    LET next_id NUMBER := (SELECT NEXT_SEQ - 1 FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = 'INITIATIVE');
-    LET init_id VARCHAR := 'INIT-' || :next_id::VARCHAR;
-    INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, OWNER, CONTENT, METADATA)
-    SELECT :init_id, 'INITIATIVE', 'Initiate', :TITLE, CURRENT_USER(),
-      PARSE_JSON(OBJECT_CONSTRUCT('hypothesis', :HYPOTHESIS, 'instructions', :INSTRUCTIONS)::VARCHAR),
-      PARSE_JSON(OBJECT_CONSTRUCT('priority', 'P2', 'submitted_via', 'SUBMIT_INITIATIVE')::VARCHAR);
-    RETURN 'Submitted: ' || :init_id || ' (Initiate). Rocky picks up within 5 minutes.';
-END;
+$$
+import json
+def run(session, title, hypothesis, instructions):
+    # Single write chokepoint (RULE-029): delegate INSERT + atomic INIT- allocation to CREATE_ARTIFACT.
+    content = {"hypothesis": hypothesis or "", "instructions": instructions or ""}
+    meta = {"priority": "P2", "submitted_via": "SUBMIT_INITIATIVE"}
+    res = session.sql(
+        "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, NULL, 'Initiate', NULL, NULL, ?)",
+        params=["INITIATIVE", title, json.dumps(content), json.dumps(meta)]
+    ).collect()
+    out = str(res[0][0]) if res else ""
+    try:
+        r = json.loads(out) if out else {}
+    except Exception:
+        r = {}
+    if isinstance(r, dict) and r.get("error"):
+        return "ERROR: " + out
+    init_id = r.get("artifact_id", "INIT-?") if isinstance(r, dict) else "INIT-?"
+    return "Submitted: " + init_id + " (Initiate). Rocky picks up within 5 minutes."
+$$;
 
 -- =============================================================================
 -- ROCKY_EXECUTE — Rocky processes one queued initiative
@@ -166,11 +178,19 @@ def run(session):
     fw_content = json.dumps({"synthesis": synthesis[:12000], "executor": "rocky-cortex-agent-v3"})
     fw_meta = json.dumps({"model": "auto", "has_web_search": True})
     try:
-        session.sql(
-            "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, OWNER, PARENT_ID, CONTENT, METADATA) "
-            "SELECT ?, ''RESEARCH'', ''Built'', ?, ''ROCKY'', ?, PARSE_JSON(?), PARSE_JSON(?)",
-            params=[res_id, "Rocky Research: " + title[:200], init_id, fw_content, fw_meta]
+        # Single write chokepoint (RULE-029): delegate the RESEARCH INSERT to CREATE_ARTIFACT
+        # (res_id already de-duped above; passed as explicit id).
+        wres = session.sql(
+            "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, ?, ''Built'', NULL, ?, ?)",
+            params=["RESEARCH", "Rocky Research: " + title[:200], fw_content, init_id, res_id, fw_meta]
         ).collect()
+        wout = str(wres[0][0]) if wres else ""
+        try:
+            wj = json.loads(wout)
+        except Exception:
+            wj = {}
+        if isinstance(wj, dict) and wj.get("error"):
+            return "ERROR writing research: " + wout
     except Exception as e:
         return "ERROR writing research: " + str(e)
     session.sql("UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET STAGE = ''Built'', UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?", params=[init_id]).collect()
@@ -184,7 +204,7 @@ CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(
   P_TYPE VARCHAR,
   P_TITLE VARCHAR,
   P_DESCRIPTION VARCHAR,
-  P_LAUNCH_SPEC VARIANT,
+  P_LAUNCH_SPEC VARCHAR,   -- JSON string (scalar surface for agent generic tools)
   P_PARENT_ID VARCHAR DEFAULT NULL,
   P_OWNER VARCHAR DEFAULT NULL,
   P_SENSITIVITY VARCHAR DEFAULT 'internal'
@@ -196,7 +216,7 @@ PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'run'
 EXECUTE AS OWNER  -- RULE-028: procedure-mediated write; runs as owner so contributors need no direct ARTIFACTS DML
 AS
-'
+$$
 import json
 def run(session, p_type, p_title, p_description, p_launch_spec, p_parent_id, p_owner, p_sensitivity):
     art_type = (p_type or "").upper()
@@ -219,27 +239,23 @@ def run(session, p_type, p_title, p_description, p_launch_spec, p_parent_id, p_o
         return {"error": app_type + " requires url"}
     if app_type in ("cortex_agent","streamlit","native_app") and not launch.get("identifier"):
         return {"error": app_type + " requires identifier"}
-
-    type_to_seq = {"NARRATIVE": "NARRATIVE", "APP": "APP", "MODEL": "APP", "DASHBOARD": "APP"}
-    seq_key = type_to_seq.get(art_type, art_type)
-    cnt = session.sql("SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?", params=[seq_key]).collect()
-    if cnt[0]["C"] == 0:
-        session.sql("INSERT INTO GUPPIWHEEL.PUBLIC.ID_CONVENTIONS (ENTITY, NEXT_SEQ) VALUES (?, 1)", params=[seq_key]).collect()
-    seq_rows = session.sql("SELECT NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?", params=[seq_key]).collect()
-    next_seq = seq_rows[0]["NEXT_SEQ"]
-    prefix = "NAR" if art_type == "NARRATIVE" else "APP" if art_type == "APP" else "MOD" if art_type == "MODEL" else "DASH"
-    artifact_id = prefix + "-" + str(next_seq)
-    metadata = {"launch": launch, "sensitivity": p_sensitivity or "internal"}
+    # Single write chokepoint (RULE-029): validate launch, then DELEGATE the INSERT to CREATE_ARTIFACT
+    # (gap-free IDs, PRODUCT_ID, type/stage validation). No direct INSERT here.
     content = {"description": p_description or ""}
-    owner = p_owner or session.sql("SELECT CURRENT_USER() AS U").collect()[0]["U"]
-    session.sql(
-        "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, METADATA) "
-        "SELECT ?, ?, ''Built'', ?, ?, ?, PARSE_JSON(?), PARSE_JSON(?)",
-        params=[artifact_id, art_type, p_parent_id, p_title, owner, json.dumps(content), json.dumps(metadata)]
+    meta = {"launch": launch, "sensitivity": p_sensitivity or "internal"}
+    res = session.sql(
+        "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, ?, 'Built', NULL, NULL, ?)",
+        params=[art_type, p_title, json.dumps(content), p_parent_id, json.dumps(meta)]
     ).collect()
-    session.sql("UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = ? WHERE ENTITY = ?", params=[next_seq + 1, seq_key]).collect()
-    return {"artifact_id": artifact_id, "type": art_type, "launch": launch}
-';
+    out = str(res[0][0]) if res else None
+    try:
+        r = json.loads(out) if out else {"error": "no response from CREATE_ARTIFACT"}
+    except Exception:
+        r = {"result": out}
+    if isinstance(r, dict):
+        r["launch"] = launch
+    return r
+$$;
 
 -- =============================================================================
 -- GET_ARTIFACT_LAUNCH — resolve any launchable to URL/identifier
@@ -351,7 +367,9 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) T
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE() TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
--- CREATE_ARTIFACT — the single gated write path (RULE-029)
+-- CREATE_ARTIFACT — the single gated write path (RULE-029): the ONLY proc that INSERTs into ARTIFACTS.
+-- PUBLISH_ARTIFACT / SUBMIT_INITIATIVE / ROCKY_EXECUTE / STEWART_AUDIT / PROPOSE_CORRECTION / BOB_EXECUTE delegate here.
+-- All-scalar surface (P_CONTENT/P_TAGS/P_METADATA are JSON strings) so Cortex agent generic tools over a warehouse can call it directly.
 -- Registry-driven gap-free allocation from ID_CONVENTIONS; refuses existing IDs.
 -- Dual mode: P_EXPLICIT_ID (descriptive, uniqueness-checked) or auto from (TYPE, PRODUCT).
 -- =============================================================================
@@ -359,12 +377,12 @@ CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
   P_TYPE VARCHAR,
   P_TITLE VARCHAR,
   P_PRODUCT VARCHAR DEFAULT NULL,
-  P_CONTENT VARIANT DEFAULT NULL,
+  P_CONTENT VARCHAR DEFAULT NULL,      -- JSON string (scalar surface: agent generic tools over warehouse cannot pass VARIANT/OBJECT/ARRAY)
   P_PARENT_ID VARCHAR DEFAULT NULL,
   P_STAGE VARCHAR DEFAULT NULL,
-  P_TAGS ARRAY DEFAULT NULL,
+  P_TAGS VARCHAR DEFAULT NULL,          -- JSON array string, e.g. ["a","b"]
   P_EXPLICIT_ID VARCHAR DEFAULT NULL,
-  P_METADATA VARIANT DEFAULT NULL
+  P_METADATA VARCHAR DEFAULT NULL       -- JSON string
 )
 RETURNS VARIANT
 LANGUAGE PYTHON
@@ -452,14 +470,14 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     session.sql(
         "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS "
         "(ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, TAGS, METADATA, PRODUCT_ID, CREATED_AT, UPDATED_AT) "
-        "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), ?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
+        "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), NULLIF(?, 'None'), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
         params=[new_id, t, stage, (p_parent_id if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None), p_title, owner,
                 json.dumps(content), json.dumps(tags), json.dumps(meta), prod_id]
     ).collect()
     return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner, "product_id": prod_id}
 $$;
-GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,ARRAY,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_ADMIN;
-GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,ARRAY,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 
 -- =============================================================================
 -- STEWART_AUDIT — Stewart's read-only grounding/hygiene scan (RULE-027).
@@ -486,7 +504,7 @@ def run(session):
         "scanned_surfaces": ["ARTIFACTS", "RULES", "ID_CONVENTIONS"],
         "note": "Read-only scan. Stewart proposes corrections via STORY children; it does not apply fixes (RULE-027)."})
     meta = json.dumps({"agent": "Stewart", "kind": "grounding_health"})
-    session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, PARSE_JSON(?), NULL, 'Built', ARRAY_CONSTRUCT('guppi'), ?, PARSE_JSON(?))",
+    session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, ?, NULL, 'Built', '[\"guppi\"]', ?, ?)",
         params=["Stewart grounding audit " + ts, content, audit_id, meta]).collect()
     return {"audit_id": audit_id, "verdict": verdict, "issue_count": len(findings), "findings": findings}
 $$;
@@ -513,7 +531,7 @@ def run(session, p_audit_id, p_title, p_finding, p_proposed_fix, p_target_ref):
     parent = p_audit_id if (isinstance(p_audit_id, str) and p_audit_id.strip()) else None
     content = json.dumps({"finding": p_finding, "proposed_fix": p_proposed_fix, "target_ref": tref, "proposed_by": "Stewart"})
     meta = json.dumps({"agent": "Stewart", "proposal": True, "status": "proposed", "authority": "sub-agent propose-only per RULE-027"})
-    r = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('STORY', ?, 'STEWART', PARSE_JSON(?), ?, 'Initiate', ARRAY_CONSTRUCT('guppi'), NULL, PARSE_JSON(?))",
+    r = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('STORY', ?, 'STEWART', ?, ?, 'Initiate', '[\"guppi\"]', NULL, ?)",
         params=[p_title, content, parent, meta]).collect()
     out = r[0][0] if r else None
     return {"proposed_story": out, "parent_audit": parent, "note": "Proposal only. Human/orchestrator reviews + applies. Stewart cannot change doctrine (RULE-027)."}
@@ -677,8 +695,8 @@ def run(session, p_research_id, p_target, p_angle):
             "judges": [{"model": j["judge"], "trust": j["trust"]} for j in js]}
         aid = ("AUDIT-" + run_id + "-" + author.replace("-", "").replace(".", ""))[:60]
         try:
-            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, PARSE_JSON(?), NULL, 'Built', "
-                "ARRAY_CONSTRUCT('tars','bob','bakeoff'), ?, PARSE_JSON(?))",
+            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, ?, NULL, 'Built', "
+                "'[\"tars\",\"bob\",\"bakeoff\"]', ?, ?)",
                 params=["TARS bake-off: " + author + " on " + target[:50], json.dumps(content), aid, json.dumps(meta)]).collect()
             audit_ids.append(aid)
         except Exception:
@@ -692,9 +710,9 @@ def run(session, p_research_id, p_target, p_angle):
         "grounding": {"research_id": p_research_id, "agent": "BOB_AGENT", "bond": True},
         "no_guppi_mention": True, "built_by": "BOB_EXECUTE"}
     try:
-        cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, NULL, PARSE_JSON(?), ?, 'Built', "
-            "ARRAY_CONSTRUCT(?), NULL, PARSE_JSON(?))",
-            params=["Bob: " + target[:70] + " on Snowflake (position)", json.dumps(nar_content), init_id, tag, json.dumps(nar_meta)]).collect()
+        cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, NULL, ?, ?, 'Built', "
+            "?, NULL, ?)",
+            params=["Bob: " + target[:70] + " on Snowflake (position)", json.dumps(nar_content), init_id, json.dumps([tag]), json.dumps(nar_meta)]).collect()
         nar_res = str(cr[0][0]) if cr else None
         try:
             nar_id = json.loads(nar_res).get("artifact_id") if nar_res else None

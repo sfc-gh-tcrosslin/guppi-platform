@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.8.0 — Engine Seed 01: Schema
+-- guppi-platform v3.8.1 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -54,13 +54,17 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.RULES (
     CONDITION_SQL   VARCHAR(4000)   NOT NULL,
     ENFORCEMENT     VARCHAR(10)     NOT NULL DEFAULT 'warn',
     OVERRIDABLE     BOOLEAN         DEFAULT FALSE,
-    MESSAGE         VARCHAR(1000)   NOT NULL,
+    MESSAGE         VARCHAR(4000)   NOT NULL,
     ENABLED         BOOLEAN         DEFAULT TRUE,
     VERSION         NUMBER          DEFAULT 1,
     CREATED_AT      TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
     UPDATED_AT      TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
     CREATED_BY      VARCHAR(200)    DEFAULT CURRENT_USER()
 );
+-- Self-heal: widen MESSAGE on pre-existing installs (CREATE TABLE IF NOT EXISTS won't). Several doctrine
+-- messages (RULE-026/028) exceed 1000 chars; 1000 silently stubbed them on older installs. Idempotent.
+ALTER TABLE GUPPIWHEEL.PUBLIC.RULES ALTER COLUMN MESSAGE SET DATA TYPE VARCHAR(4000);
+
 
 -- =============================================================================
 -- VIOLATIONS — where broken rules land
@@ -173,7 +177,7 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PLUGIN_VERSION (
 );
 
 MERGE INTO GUPPIWHEEL.PUBLIC.PLUGIN_VERSION t
-USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.8.0' AS VERSION) s
+USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.8.1' AS VERSION) s
 ON t.PLUGIN_NAME = s.PLUGIN_NAME
 WHEN MATCHED THEN UPDATE SET VERSION = s.VERSION, INSTALLED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (PLUGIN_NAME, VERSION) VALUES (s.PLUGIN_NAME, s.VERSION);

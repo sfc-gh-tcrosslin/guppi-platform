@@ -79,10 +79,14 @@ instructions:
     1. Submit initiative: call submit_initiative (Rocky researches within 5 min)
     2. Query flywheel: use flywheel_query for artifacts, stages, owners, lineage
     3. Advance stage: call advance_stage (rules engine validates)
-    4. Publish artifact: call publish_artifact when a polished output (brief, app, model, dashboard) needs to land in the wheel.
+    4. Publish a LAUNCHABLE: call publish_artifact ONLY for NARRATIVE/APP/MODEL/DASHBOARD that carry a launch spec (something a human opens).
+    5. Record any OTHER artifact: call create_artifact for non-launchable wheel artifacts — RESEARCH findings, STORY, EPIC, OUTCOME — that have no launch spec. (This is how a research finding lands under an initiative, e.g. P_PARENT_ID=INIT-29.)
+
+    WHICH WRITE TOOL: launch spec? -> publish_artifact. No launch spec? -> create_artifact. Never hand-assign an ID; the registry allocates it (leave P_EXPLICIT_ID empty).
+    IMPORTANT: pass complex args as JSON STRINGS, not objects — P_CONTENT, P_METADATA, P_TAGS (and publish's P_LAUNCH_SPEC) are strings of JSON, e.g. P_CONTENT = '{"synthesis":"..."}', P_TAGS = '["vbc","demo"]'.
 
     RULES:
-    - RULE-013 Headless First: All outputs MUST be artifacts. Never create docs as primary output. Use publish_artifact.
+    - RULE-013 Headless First: All outputs MUST be artifacts. Never create docs as primary output. Use create_artifact (or publish_artifact for launchables).
     - RULE-014 Status Ownership: You set Initiate. Rocky sets Research/Built/Narrated.
     - RULE-015 Collaboration Tags: Use metadata.tagged_users for routing.
     - RULE-016 No Self-Spawning: You don't spawn work for yourself.
@@ -133,11 +137,28 @@ tools:
           P_TYPE: { type: string, description: "NARRATIVE, APP, MODEL, or DASHBOARD" }
           P_TITLE: { type: string }
           P_DESCRIPTION: { type: string }
-          P_LAUNCH_SPEC: { type: object, description: "Object matching launch shape for the chosen app_type" }
+          P_LAUNCH_SPEC: { type: string, description: "JSON STRING matching the launch shape for the chosen app_type" }
           P_PARENT_ID: { type: string }
           P_OWNER: { type: string }
           P_SENSITIVITY: { type: string }
         required: ["P_TYPE", "P_TITLE", "P_LAUNCH_SPEC"]
+  - tool_spec:
+      type: generic
+      name: create_artifact
+      description: "Create a NON-launchable artifact in the wheel (RESEARCH, STORY, EPIC, OUTCOME, etc.). The single gated write path; the registry allocates the ID. Use publish_artifact instead for launchables (NARRATIVE/APP/MODEL/DASHBOARD)."
+      input_schema:
+        type: object
+        properties:
+          P_TYPE: { type: string, description: "RESEARCH, STORY, EPIC, OUTCOME, INCIDENT, DEFECT, etc. NOT a launchable." }
+          P_TITLE: { type: string }
+          P_PRODUCT: { type: string, description: "Product slug (guppi/f6/fimr/forge/stars/dunedin). Required for STORY/DEFECT; otherwise optional." }
+          P_CONTENT: { type: string, description: "JSON STRING (not an object), e.g. {\"synthesis\":\"...\"}" }
+          P_PARENT_ID: { type: string, description: "Parent artifact id, e.g. INIT-29." }
+          P_STAGE: { type: string, description: "Initiate/Research/Building/Built/etc. Defaults to Initiate." }
+          P_TAGS: { type: string, description: "JSON ARRAY STRING (not an array), e.g. [\"test\",\"vbc\"]" }
+          P_EXPLICIT_ID: { type: string, description: "Leave empty — the registry allocates the ID." }
+          P_METADATA: { type: string, description: "Optional JSON STRING." }
+        required: ["P_TYPE", "P_TITLE"]
   - tool_spec:
       type: cortex_analyst_text_to_sql
       name: flywheel_query
@@ -153,6 +174,10 @@ tool_resources:
     execution_environment: { type: warehouse, warehouse: __WH__ }
   publish_artifact:
     identifier: GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT
+    type: procedure
+    execution_environment: { type: warehouse, warehouse: __WH__ }
+  create_artifact:
+    identifier: GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT
     type: procedure
     execution_environment: { type: warehouse, warehouse: __WH__ }
   flywheel_query:
