@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.7.0 — Engine Seed 04: Semantic View
+-- guppi-platform v3.8.0 — Engine Seed 04: Semantic View
 -- TIER 1 (DEFAULT): the semantic view shape is yours to re-author. It binds Cortex
 --   Analyst to ARTIFACTS for natural-language querying. See COCO.md.
 -- For Cortex Analyst natural-language querying via the Cowork agent.

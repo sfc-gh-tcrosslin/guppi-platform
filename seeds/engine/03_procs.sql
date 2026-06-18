@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.7.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.8.0 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -441,14 +441,22 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     if not isinstance(tags, list):
         tags = []
 
+    # STO-SUBSTRATE-8: stamp controlled PRODUCT_ID when P_PRODUCT is a registered product (the share boundary).
+    prod = (p_product if isinstance(p_product, str) else "").lower().strip()
+    prod_id = None
+    if prod:
+        chk = session.sql("SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE LOWER(PRODUCT_ID)=?", params=[prod]).collect()
+        if chk and chk[0]["C"] > 0:
+            prod_id = prod
+
     session.sql(
         "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS "
-        "(ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, TAGS, METADATA, CREATED_AT, UPDATED_AT) "
-        "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
+        "(ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, TAGS, METADATA, PRODUCT_ID, CREATED_AT, UPDATED_AT) "
+        "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), ?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
         params=[new_id, t, stage, (p_parent_id if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None), p_title, owner,
-                json.dumps(content), json.dumps(tags), json.dumps(meta)]
+                json.dumps(content), json.dumps(tags), json.dumps(meta), prod_id]
     ).collect()
-    return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner}
+    return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner, "product_id": prod_id}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,ARRAY,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,ARRAY,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
@@ -669,8 +677,8 @@ def run(session, p_research_id, p_target, p_angle):
             "judges": [{"model": j["judge"], "trust": j["trust"]} for j in js]}
         aid = ("AUDIT-" + run_id + "-" + author.replace("-", "").replace(".", ""))[:60]
         try:
-            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, 'guppi', PARSE_JSON(?), NULL, 'Built', "
-                "ARRAY_CONSTRUCT('guppi','tars','bob','bakeoff'), ?, PARSE_JSON(?))",
+            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, PARSE_JSON(?), NULL, 'Built', "
+                "ARRAY_CONSTRUCT('tars','bob','bakeoff'), ?, PARSE_JSON(?))",
                 params=["TARS bake-off: " + author + " on " + target[:50], json.dumps(content), aid, json.dumps(meta)]).collect()
             audit_ids.append(aid)
         except Exception:

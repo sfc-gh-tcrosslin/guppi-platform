@@ -1,4 +1,4 @@
-# guppi-platform v3.7.0
+# guppi-platform v3.8.0
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -145,6 +145,37 @@ metadata.launch = {
 ```
 
 `GET_ARTIFACT_LAUNCH(artifact_id)` resolves any of these to the right thing — presigned URL, identifier, external URL — and logs every call to `ARTIFACT_LAUNCHES` for audit.
+
+## Per-product sharing (Vert)
+
+The wheel packages any product's artifacts as a Secure Data Share to specific accounts. The boundary is the controlled `ARTIFACTS.PRODUCT_ID` (FK to `PRODUCTS`), **not** the folksonomy tag. `guppi` is the platform's own self-meta product; customers/prospects are their own products.
+
+**Confidentiality is enforced at three levels:**
+- **Row** — `PRODUCT_ID` decides which artifacts are in a product's share.
+- **Field** — share views select an explicit safe field set and strip the `internal` namespace (`CONTENT:internal.*`, `METADATA:internal.*`); raw `METADATA` is never shared. Internal commentary belongs in `METADATA:internal`.
+- **Persistence** — the same line governs Bond/memory: record principles, never customer payloads.
+
+`PRODUCT_SHARE_LEAK_V` (in `GUPPI_CONFORMANCE_V`) is the tripwire — it flags any guppi artifact whose *subject* is a customer (`CONTENT:target`/title) or that still carries an `internal` key. Must be 0. It keys on subject, not topical tags, so a roadmap story that merely mentions a customer is not flagged.
+
+**The recipe** (guppi is the template; a customer share is fill-in-the-blank):
+```sql
+-- 1) artifacts carry PRODUCT_ID='<product>' (CREATE_ARTIFACT stamps it from P_PRODUCT)
+-- 2) a product-scoped secure view: row filter + safe field projection
+CREATE OR REPLACE SECURE VIEW <PRODUCT>_SHARE_V AS
+  SELECT ID, TYPE, STAGE, TITLE, OBJECT_DELETE(CONTENT,'internal','strategic_note') AS CONTENT,
+         TAGS, PARENT_ID, PRODUCT_ID, CREATED_AT, UPDATED_AT
+  FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+  WHERE PRODUCT_ID='<product>' AND SUPERSEDED_BY IS NULL;
+-- 3) the share + grants
+CREATE SHARE <PRODUCT>_SHARE;
+GRANT USAGE ON DATABASE GUPPIWHEEL TO SHARE <PRODUCT>_SHARE;
+GRANT USAGE ON SCHEMA GUPPIWHEEL.PUBLIC TO SHARE <PRODUCT>_SHARE;
+GRANT SELECT ON VIEW GUPPIWHEEL.PUBLIC.<PRODUCT>_SHARE_V TO SHARE <PRODUCT>_SHARE;
+-- 4) add only that product's consumer account(s)
+ALTER SHARE <PRODUCT>_SHARE ADD ACCOUNTS=<account_locator>;
+```
+
+**`PRODUCT_ID='<customer>'` means the artifact belongs to that product — not that it is customer-facing.** A customer share must additionally curate for customer-facing content (never ship internal strategy). The consumer lands the share in a distinct database (default `VERT.PUBLIC.*`, RULE-021), never auto-merged into their local wheel.
 
 ## Documentation
 

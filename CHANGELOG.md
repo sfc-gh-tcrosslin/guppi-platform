@@ -2,6 +2,21 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.8.0] — 2026-06-17
+
+### Feature — guppi as a controlled product + per-product share boundary (STO-SUBSTRATE-8)
+
+Formalized `guppi` as a controlled product and made `PRODUCT_ID` the reusable per-product share boundary (Vert). `guppi` is instance #1 (the platform's own self-meta journey); the same primitive packages a customer/prospect initiative as its own share to just that account.
+
+- **`ARTIFACTS.PRODUCT_ID`** (new, FK to `PRODUCTS`) — the controlled membership / share boundary, replacing the folksonomy `guppi` tag. Self-heal `ALTER ... ADD COLUMN IF NOT EXISTS` for existing installs.
+- **`PRODUCTS` `platform` → `guppi`** (singular umbrella; bootstrap seeds the `guppi` product on fresh installs).
+- **Membership derived + human-reviewed** — 59 self-meta artifacts stamped `PRODUCT_ID='guppi'` (EPIC-SUBSTRATE/INIT-36/INIT-46 spine + platform/guppi tags + changelog narratives), with customer-subject artifacts (Ferrum bake-off audits, Adonis research) hard-excluded.
+- **Two-dimensional confidentiality:** row (`PRODUCT_ID`) + field (an `internal` namespace the share never projects). `GUPPI_SHARE_V` now filters `PRODUCT_ID='guppi'` and strips `CONTENT:internal`/`strategic_note`, omitting raw `METADATA`. Migrated `NAR-34.CONTENT:strategic_note` → `METADATA:internal`.
+- **`PRODUCT_SHARE_LEAK_V`** (new) — confidentiality tripwire keyed on *subject* (CONTENT:target/title), added to `GUPPI_CONFORMANCE_V` (now 5 checks, all PASS). Won't false-positive roadmap stories that mention a customer.
+- **`CREATE_ARTIFACT` stamps `PRODUCT_ID`** from a validated `P_PRODUCT` — artifacts are born-bucketed (perpetuation). Bob's bake-off audits now use NULL product (customer-subject, not guppi).
+- **Viewer** (`render_guppi`) reads the controlled `PRODUCT_ID` (with metadata fallback).
+- **README:** documented the reusable per-product share recipe (row filter + field projection + SHARE + ADD ACCOUNTS).
+
 ## [3.7.0] — 2026-06-16
 
 ### Feature — Bob, the Building-stage agent (INIT-36)

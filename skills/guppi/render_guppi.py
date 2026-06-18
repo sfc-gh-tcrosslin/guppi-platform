@@ -27,7 +27,7 @@ def query_guppi():
     products = [{"id": r[0], "name": r[1], "description": r[2], "status": r[3]} for r in cur.fetchall()]
 
     # Epics from GUPPIWHEEL
-    cur.execute("SELECT ID, METADATA:product::VARCHAR, TITLE, CONTENT:description::VARCHAR, STAGE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'EPIC' ORDER BY TITLE")
+    cur.execute("SELECT ID, COALESCE(PRODUCT_ID, METADATA:product::VARCHAR), TITLE, CONTENT:description::VARCHAR, STAGE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'EPIC' ORDER BY TITLE")
     epics = [{"id": r[0], "product_id": r[1] or "", "name": r[2], "description": r[3] or "", "status": r[4]} for r in cur.fetchall()]
 
     cur.execute("""
@@ -35,7 +35,7 @@ def query_guppi():
                METADATA:priority::VARCHAR, STAGE, METADATA:story_points::NUMBER,
                OWNER, METADATA:sprint::VARCHAR,
                TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD'), TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD'),
-               METADATA:product::VARCHAR
+               COALESCE(PRODUCT_ID, METADATA:product::VARCHAR)
         FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
         WHERE TYPE = 'STORY'
         ORDER BY METADATA:priority, ID
@@ -56,7 +56,7 @@ def query_guppi():
                CONTENT:fixed_in::VARCHAR, NULL, CONTENT:repro::VARCHAR, OWNER,
                NULL, NULL, 0,
                TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD'), TO_VARCHAR(UPDATED_AT, 'YYYY-MM-DD'),
-               METADATA:product::VARCHAR
+               COALESCE(PRODUCT_ID, METADATA:product::VARCHAR)
         FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
         WHERE TYPE = 'DEFECT'
         ORDER BY METADATA:severity, METADATA:priority
@@ -73,7 +73,7 @@ def query_guppi():
         })
 
     cur.execute("""
-        SELECT ID, METADATA:product::VARCHAR, METADATA:severity::VARCHAR, STAGE, 
+        SELECT ID, COALESCE(PRODUCT_ID, METADATA:product::VARCHAR), METADATA:severity::VARCHAR, STAGE, 
                TITLE, CONTENT:description::VARCHAR,
                TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI'), NULL, NULL,
                NULL, NULL, NULL,
@@ -167,7 +167,7 @@ def query_guppi():
 
     cur.execute("""
         SELECT ID, TITLE, CONTENT:narrative_type::VARCHAR, CONTENT:description::VARCHAR, 
-               METADATA:product::VARCHAR, TAGS, METADATA:version::VARCHAR,
+               COALESCE(PRODUCT_ID, METADATA:product::VARCHAR), TAGS, METADATA:version::VARCHAR,
                CONTENT:file_path::VARCHAR, TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD')
         FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
         WHERE TYPE = 'NARRATIVE'

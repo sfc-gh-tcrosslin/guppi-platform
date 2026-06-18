@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.7.0 — Engine Seed 01: Schema
+-- guppi-platform v3.8.0 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -29,13 +29,15 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.ARTIFACTS (
     OWNER       VARCHAR(200),
     CREATED_AT  TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
     UPDATED_AT  TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
-    METADATA    VARIANT
+    METADATA    VARIANT,
+    PRODUCT_ID  VARCHAR(50)     -- STO-SUBSTRATE-8: controlled product membership (FK to PRODUCTS); the share/no-share boundary
 );
 
--- Self-heal existing installs: CREATE TABLE IF NOT EXISTS won't add SUPERSEDED_BY or widen
+-- Self-heal existing installs: CREATE TABLE IF NOT EXISTS won't add SUPERSEDED_BY/PRODUCT_ID or widen
 -- ID/PARENT_ID on a pre-existing ARTIFACTS. These ALTERs are idempotent (no-ops on fresh installs).
 -- SUPERSEDED_BY (RULE-025) + 64-char IDs are required by the serving/TARS views below.
 ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ADD COLUMN IF NOT EXISTS SUPERSEDED_BY VARCHAR(64);
+ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ADD COLUMN IF NOT EXISTS PRODUCT_ID VARCHAR(50);
 ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ALTER COLUMN ID SET DATA TYPE VARCHAR(64);
 ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ALTER COLUMN PARENT_ID SET DATA TYPE VARCHAR(64);
 ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ALTER COLUMN SUPERSEDED_BY SET DATA TYPE VARCHAR(64);
@@ -171,7 +173,7 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PLUGIN_VERSION (
 );
 
 MERGE INTO GUPPIWHEEL.PUBLIC.PLUGIN_VERSION t
-USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.7.0' AS VERSION) s
+USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.8.0' AS VERSION) s
 ON t.PLUGIN_NAME = s.PLUGIN_NAME
 WHEN MATCHED THEN UPDATE SET VERSION = s.VERSION, INSTALLED_AT = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT (PLUGIN_NAME, VERSION) VALUES (s.PLUGIN_NAME, s.VERSION);
@@ -305,6 +307,33 @@ SELECT 'rule_noncanonical_applies_to', 'MED', COUNT(*), LISTAGG(RULE_ID, ', ') W
 FROM GUPPIWHEEL.PUBLIC.RULES
 WHERE ENABLED=TRUE AND APPLIES_TO_TYPE <> 'ALL' AND APPLIES_TO_TYPE NOT IN (SELECT t FROM canon_type);
 
+-- GUPPI_SHARE_V — the shareable surface (STO-SUBSTRATE-8). Simple surface, controlled foundation:
+-- row boundary = PRODUCT_ID (not the folksonomy tag); field boundary = internal namespace stripped,
+-- raw METADATA omitted (it holds METADATA:internal.*). This is the per-product share template:
+-- a customer share is the same shape with PRODUCT_ID swapped + SHARE pointed at that account.
+CREATE OR REPLACE SECURE VIEW GUPPIWHEEL.PUBLIC.GUPPI_SHARE_V AS
+SELECT
+  ID, TYPE, STAGE, TITLE,
+  OBJECT_DELETE(CONTENT, 'internal', 'strategic_note') AS CONTENT,  -- defensively strip internal namespace
+  TAGS, PARENT_ID, PRODUCT_ID, CREATED_AT, UPDATED_AT
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE PRODUCT_ID = 'guppi' AND SUPERSEDED_BY IS NULL;
+
+-- PRODUCT_SHARE_LEAK_V — confidentiality tripwire (STO-SUBSTRATE-8). Two dimensions; must be 0:
+--   row: a guppi-product artifact whose SUBJECT is a customer/prospect (CONTENT:target or title).
+--        Keys on SUBJECT, not topical tags, so platform roadmap stories that merely mention a
+--        customer (e.g. "onboard FIMR") are NOT flagged.
+--   field: a guppi artifact still carrying an internal key in CONTENT (would ride into the share).
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V AS
+SELECT ID, PRODUCT_ID, 'customer-subject in guppi product' AS leak, LEFT(TITLE,60) AS detail
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE PRODUCT_ID='guppi'
+  AND UPPER(TITLE || ' ' || COALESCE(CONTENT:target::string,'')) RLIKE '.*(FERRUM|ADONIS|MEDUIT|MISSISSIPPI|MCKESSON|DEEPHEALTH|ABARCA).*'
+UNION ALL
+SELECT ID, PRODUCT_ID, 'internal key in shared CONTENT', LEFT(TITLE,60)
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE PRODUCT_ID='guppi' AND (CONTENT:strategic_note IS NOT NULL OR CONTENT:internal IS NOT NULL);
+
 -- GUPPI_CONFORMANCE_V — the conformance gate (COCO.md "you got Guppi when this passes").
 -- Definition of done after any build or re-author: every row must read PASS. These are the
 -- Tier 0 invariants that drift silently because Snowflake does not enforce PK/UNIQUE/FK.
@@ -320,7 +349,10 @@ SELECT 'grounding-health', 'Tier0 #1/#8 (no orphans/noncanonical, no dead refs)'
        IFF((SELECT COALESCE(SUM(n), 0) FROM GUPPIWHEEL.PUBLIC.GROUNDING_HEALTH_V) = 0, 'PASS', 'FAIL')
 UNION ALL
 SELECT 'rules-present', 'Tier0 #5 (doctrine is data)',
-       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.RULES WHERE ENABLED = TRUE) > 0, 'PASS', 'FAIL');
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.RULES WHERE ENABLED = TRUE) > 0, 'PASS', 'FAIL')
+UNION ALL
+SELECT 'no-share-leak', 'Tier0 confidentiality (product share boundary, STO-SUBSTRATE-8)',
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V) = 0, 'PASS', 'FAIL');
 
 -- =============================================================================
 -- RBAC (3-tier)
