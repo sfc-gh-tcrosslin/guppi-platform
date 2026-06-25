@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.9.2] — 2026-06-25
+
+### Fix — CoWork content Q&A (cortex_search tool) + Claude→CoCo tool-id hygiene
+
+`GUPPIWHEEL_COWORK_AGENT` could not answer questions about artifact CONTENT: it only had the `flywheel_query` Cortex Analyst tool over `GUPPIWHEEL_SV`, whose raw-VARIANT CONTENT dimension Cortex Analyst cannot read. Added a `cortex_search` tool **`search_artifacts`** over the existing `ARTIFACTS_SEARCH_SVC` (its `SEARCH_TEXT` already flattens CONTENT). The agent now routes: `flywheel_query` for structured facts/counts/stages/lineage; `search_artifacts` for "what does X say / summarize / find artifacts about ___". Updated `seeds/engine/05_agents.sql` (tool_spec + tool_resource + ACTIONS / "WHICH READ TOOL" instructions) and applied live.
+
+Also fixed Claude Code → CoCo Desktop tool-id drift surfaced during plugin install (these silently no-op the restriction/matcher in CoCo otherwise):
+- `agents/tars.md` tools `Read`/`Grep`/`Glob` → `read`/`grep`/`glob`
+- `hooks/hooks.json` PreToolUse matcher `Write|Edit` → `write|edit`
+
+No schema change; engine seed patched (agents only).
+
 ## [3.9.1] — 2026-06-18
 
 ### Docs — COCO.md "Staying current" (inbound-only update path)

@@ -77,11 +77,13 @@ instructions:
 
     ACTIONS:
     1. Submit initiative: call submit_initiative (Rocky researches within 5 min)
-    2. Query flywheel: use flywheel_query for artifacts, stages, owners, lineage
-    3. Advance stage: call advance_stage (rules engine validates)
-    4. Publish a LAUNCHABLE: call publish_artifact ONLY for NARRATIVE/APP/MODEL/DASHBOARD that carry a launch spec (something a human opens).
-    5. Record any OTHER artifact: call create_artifact for non-launchable wheel artifacts — RESEARCH findings, STORY, EPIC, OUTCOME — that have no launch spec. (This is how a research finding lands under an initiative, e.g. P_PARENT_ID=INIT-29.)
+    2. Query flywheel (STRUCTURED facts): use flywheel_query for counts, stages, owners, lineage, parent-child, tags, dates.
+    3. Search content (UNSTRUCTURED text): use search_artifacts to read what an artifact SAYS — research synthesis, narrative prose, story details, findings, verdicts. Use this for any "what does X say / summarize / what did the research conclude / find artifacts about ___" question.
+    4. Advance stage: call advance_stage (rules engine validates)
+    5. Publish a LAUNCHABLE: call publish_artifact ONLY for NARRATIVE/APP/MODEL/DASHBOARD that carry a launch spec (something a human opens).
+    6. Record any OTHER artifact: call create_artifact for non-launchable wheel artifacts — RESEARCH findings, STORY, EPIC, OUTCOME — that have no launch spec. (This is how a research finding lands under an initiative, e.g. P_PARENT_ID=INIT-29.)
 
+    WHICH READ TOOL: need structured facts/counts/lineage? -> flywheel_query. Need to read or summarize what an artifact SAYS? -> search_artifacts.
     WHICH WRITE TOOL: launch spec? -> publish_artifact. No launch spec? -> create_artifact. Never hand-assign an ID; the registry allocates it (leave P_EXPLICIT_ID empty).
     IMPORTANT: pass complex args as JSON STRINGS, not objects — P_CONTENT, P_METADATA, P_TAGS (and publish's P_LAUNCH_SPEC) are strings of JSON, e.g. P_CONTENT = '{"synthesis":"..."}', P_TAGS = '["vbc","demo"]'.
 
@@ -162,7 +164,11 @@ tools:
   - tool_spec:
       type: cortex_analyst_text_to_sql
       name: flywheel_query
-      description: "Query GuppiWheel: artifacts, initiatives, research, stories, apps, lineage, stages, owners, tags."
+      description: "Query GuppiWheel STRUCTURED facts: counts, stages, owners, lineage (parent-child), tags, dates. Use for 'how many', 'which stage', 'who owns', 'what hangs off INIT-X'. NOT for reading artifact body text — use search_artifacts for that."
+  - tool_spec:
+      type: cortex_search
+      name: search_artifacts
+      description: "Semantic search over the FULL CONTENT/body of GuppiWheel artifacts — research synthesis, narrative prose, story details, findings, verdicts, hypotheses. Use whenever the user asks what an artifact SAYS, asks to summarize an artifact, or asks a content question that needs reading the body (e.g. 'what did the imaging research conclude', 'summarize INIT-48 findings', 'find artifacts about sub-second latency'). For structured counts/stages/lineage use flywheel_query instead."
 tool_resources:
   submit_initiative:
     identifier: GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE
@@ -183,6 +189,11 @@ tool_resources:
   flywheel_query:
     semantic_view: GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
     execution_environment: { type: warehouse, warehouse: __WH__ }
+  search_artifacts:
+    name: GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_SVC
+    id_column: ID
+    title_column: TITLE
+    max_results: "6"
 $$;
 
 -- Build + run the CREATE with the active warehouse substituted in.

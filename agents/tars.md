@@ -3,9 +3,9 @@ name: tars
 description: Independent adversarial trust auditor. Uses a different LLM (Llama) to audit AI-generated artifacts. Quantifies trust via the Love Equation (dE/dt = B(C-D)E). Reports directly to human — builder cannot override.
 tools:
   - snowflake_sql_execute
-  - Read
-  - Grep
-  - Glob
+  - read
+  - grep
+  - glob
 model: auto
 ---
 

@@ -1,7 +1,7 @@
 {
   "name": "guppi-platform",
   "description": "GuppiWheel — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel. Includes Rocky autonomous research agent, Cowork dispatch agent, TARS trust auditor, The Bond shared cognition, and the Guppi command-center viewer. Levels 2-7 of the CoCo Maturity Model.",
-  "version": "3.9.1",
+  "version": "3.9.2",
   "author": {
     "name": "CoCo + Todd Crosslin",
     "url": "https://github.com/JacinthLaval"
