@@ -143,7 +143,7 @@ PARSE_JSON('{"description": "{what_changed}", "parent_uuid": "{parent}"}');
 Run the idempotent sync script to push all local skill changes to the registry:
 
 ```bash
-SNOWFLAKE_CONNECTION_NAME=HealthcareDemos python3 ~/.snowflake/cortex/skills/skill-registry-collaborator/sync_skills.py
+SNOWFLAKE_CONNECTION_NAME=YourConnection python3 ~/.snowflake/cortex/skills/skill-registry-collaborator/sync_skills.py
 ```
 
 This script:

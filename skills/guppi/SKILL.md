@@ -266,7 +266,7 @@ When user says "show guppi", "refresh guppi", or "open guppi":
 The viewer is READ-ONLY. All mutations happen via CoCo (headless). The HTML is a rendered report.
 
 ```bash
-SNOWFLAKE_CONNECTION_NAME=HealthcareDemos python render_guppi.py
+SNOWFLAKE_CONNECTION_NAME=YourConnection python render_guppi.py
 ```
 
 Output: `~/Downloads/GUPPI.html`

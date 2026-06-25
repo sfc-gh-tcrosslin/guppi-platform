@@ -4,7 +4,7 @@ Skill Registry Sync — Pushes all local skills (parents + sub-skills) to
 SKILL_REGISTRY.PUBLIC.SKILLS as separate rows with PARENT_SKILL_ID.
 
 Idempotent: uses MERGE ON (SKILL_ID, VERSION).
-Run: SNOWFLAKE_CONNECTION_NAME=HealthcareDemos python3 sync_skills.py
+Run: SNOWFLAKE_CONNECTION_NAME=YourConnection python3 sync_skills.py
 """
 
 import os
@@ -13,7 +13,7 @@ import uuid
 import snowflake.connector
 
 SKILLS_DIR = os.path.expanduser("~/.snowflake/cortex/skills")
-CONN_NAME = os.getenv("SNOWFLAKE_CONNECTION_NAME", "HealthcareDemos")
+CONN_NAME = os.getenv("SNOWFLAKE_CONNECTION_NAME")
 
 DOMAIN_MAP = {
     'hcls-pharma-genomics': 'genomics',
@@ -109,7 +109,8 @@ def discover_skills(base_dir):
 
 
 def main():
-    conn = snowflake.connector.connect(connection_name=CONN_NAME)
+    conn = (snowflake.connector.connect(connection_name=CONN_NAME)
+            if CONN_NAME else snowflake.connector.connect())
     cur = conn.cursor()
 
     existing = {}

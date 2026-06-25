@@ -112,7 +112,7 @@ function validateSQL(s){ const t=s.replace(/--.*$/gm,"").trim();
 ### Embeddable web-client pattern (no infra)
 - Single static page (HTML/JS or React/Expo), served locally or via a presigned URL — **runtime PAT entry**, nothing baked in (optionally persist in `sessionStorage`).
 - Browser `fetch` to `*.snowflakecomputing.com` works cross-origin with the PAT (proven). If a client hits CORS, proxy via a tiny local backend.
-- Reference implementations: `~/Downloads/CoCoStuff/healthcare-mcp-app` (Expo + serve.py) and `~/Downloads/CoCoStuff/adonis-rcm-mvp/app/index.html` (lean single-file).
+- Reference implementations to keep handy in `<your-projects-root>/`: a full MCP client app (Expo + serve.py) and a lean single-file HTML client.
 
 ---
 

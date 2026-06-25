@@ -17,8 +17,10 @@ OUTPUT_PATH = os.path.expanduser("~/Downloads/GUPPI.html")
 
 
 def query_guppi():
-    conn = snowflake.connector.connect(
-        connection_name=os.getenv("SNOWFLAKE_CONNECTION_NAME") or "HealthcareDemos"
+    _conn_name = os.getenv("SNOWFLAKE_CONNECTION_NAME")
+    conn = (
+        snowflake.connector.connect(connection_name=_conn_name)
+        if _conn_name else snowflake.connector.connect()
     )
     cur = conn.cursor()
 
@@ -1030,7 +1032,8 @@ if __name__ == "__main__":
         @fapp.route("/api/launch/<artifact_id>")
         def api_launch(artifact_id):
             import snowflake.connector as sc
-            conn = sc.connect(connection_name=os.getenv("SNOWFLAKE_CONNECTION_NAME") or "HealthcareDemos")
+            _conn_name = os.getenv("SNOWFLAKE_CONNECTION_NAME")
+            conn = sc.connect(connection_name=_conn_name) if _conn_name else sc.connect()
             try:
                 cur = conn.cursor()
                 cur.execute("CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(%s, %s)", (artifact_id, 3600))

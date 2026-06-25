@@ -215,7 +215,7 @@ Every local skill (including sub-skills) must have a corresponding row in `SKILL
 
 **Fix:** Run the sync script:
 ```bash
-SNOWFLAKE_CONNECTION_NAME=HealthcareDemos python3 ~/.snowflake/cortex/skills/skill-registry-collaborator/sync_skills.py
+SNOWFLAKE_CONNECTION_NAME=YourConnection python3 ~/.snowflake/cortex/skills/skill-registry-collaborator/sync_skills.py
 ```
 
 **Pass criteria:** Local SKILL.md count equals DB row count (excluding the duplicate synthetic-data-generator version row).

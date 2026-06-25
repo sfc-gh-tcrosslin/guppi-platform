@@ -40,7 +40,7 @@ Query Bond for relevant prior knowledge. Present findings: "From our Bond, here'
 Ask: "Have we built something like this before?"
 
 Known project locations:
-- `~/Downloads/CoCoStuff/` — all active projects
+- `<your-projects-root>/` — wherever you keep active project repos
 - `~/.snowflake/cortex/skills/` — all skills with patterns
 - Bond (`THE_BOND.PUBLIC.MEMORY_STORE`) — decisions and corrections
 
@@ -64,9 +64,9 @@ Memory summaries are NOT enough. Read the actual files:
 
 | Pattern Needed | Read This Project |
 |---|---|
-| React + Flask + SPCS + Snowflake auth | `~/Downloads/CoCoStuff/healthcare-mcp-app/` |
+| React + Flask + SPCS + Snowflake auth | a React+Flask+SPCS reference app in `<your-projects-root>/` (see the `spcs-spa-auth` skill) |
 | SPCS service spec + nginx config | healthcare-mcp-app nginx.conf + service spec |
-| Semantic model with relationships | `~/Downloads/CoCoStuff/ms-fimr/semantic_view_*/` |
+| Semantic model with relationships | a working semantic-view project in `<your-projects-root>/` |
 | Hero HTML showcase | skill-registry-mcp builder-journey-presentation.html |
 | Docker + SPCS deploy | `spcs-update-pattern` memory |
 

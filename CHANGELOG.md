@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.10.1] — 2026-06-25
+
+### Chore — scrub personal references from shipped skills
+
+Removed operator-specific paths and connection names so the plugin is clean for any installer:
+- `build-protocol`, `snowflake-mcp` — `~/Downloads/CoCoStuff/...` local project paths genericized to `<your-projects-root>/`.
+- `guppi/render_guppi.py` and `skill-registry-collaborator/sync_skills.py` — connection resolution no longer falls back to a hardcoded `HealthcareDemos`; uses the named connection if `SNOWFLAKE_CONNECTION_NAME` is set, otherwise the default connection.
+- `guppi`, `sdlc-preflight`, `skill-registry-collaborator` — example commands use `YourConnection` instead of `HealthcareDemos`.
+- Left intentionally: the two `sdlc-preflight` lines that contain `Downloads/CoCoStuff` as the **scanner search pattern** (the leak-detector that finds exactly this class of issue).
+
 ## [3.10.0] — 2026-06-25
 
 ### Feature — The Bond is now a real, installable, private-by-default feature
