@@ -473,11 +473,8 @@ git push origin main && git push snowflake main
 | oncolook-digital-pathology | ✅ | ✅ |
 | coco-skills | ✅ | ✅ |
 | building-with-coco | N/A | ✅ (webinar repo, snowflake-only) |
-| guppi-platform | ✅ (remote `jacinthlaval`, PRIVATE) | ✅ (remote `origin`) |
 
 Add more repos to this table as they get dual remotes.
-
-**NOTE — guppi-platform remote names are INVERTED** vs the rest of this table: it was cloned from sfc-gh-tcrosslin during plugin install, so `origin` = sfc-gh-tcrosslin and `jacinthlaval` = JacinthLaval (PRIVATE). Push pattern: `git push origin main` (active account sfc-gh-tcrosslin), then `gh auth switch --user JacinthLaval && git push jacinthlaval main && gh auth switch --user sfc-gh-tcrosslin`. JacinthLaval is private so `gh repo view` as sfc returns "not found".
 
 **NOTE:** `gh auth switch --user JacinthLaval` is required before pushing to origin if the active account is sfc-gh-tcrosslin. Switch back after.
 
