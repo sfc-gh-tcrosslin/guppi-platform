@@ -16,12 +16,17 @@ Automatic pull at startup. Manual writes during session.
 
 ### Session Start Protocol (AUTOMATIC — do this every session without being asked)
 
-On every new session, BEFORE doing anything else:
+On every new session, BEFORE doing anything else, pull recent context with pure SQL on your ACTIVE Snowflake connection (no external script, no hardcoded path):
 
-1. Run the sync pull:
-```bash
-SNOWFLAKE_CONNECTION_NAME=HealthcareDemos python3 /Users/toddcrosslin/Downloads/CoCoStuff/skill-registry-mcp/bond_sync.py pull
+1. Load recent + current context:
+```sql
+SELECT CATEGORY, KEY, CONTENT, ORIGIN, INSIGHT_TYPE, CREATED_AT
+FROM THE_BOND.PUBLIC.MEMORY_STORE
+WHERE SUPERSEDED_BY IS NULL
+ORDER BY UPDATED_AT DESC
+LIMIT 50;
 ```
+(The row access policy returns only rows you are entitled to see: admins and owners see all; other roles see only `shared`.)
 
 2. Record session start:
 ```sql
@@ -186,27 +191,48 @@ WHERE AGENT_ID != 'coco' AND SUPERSEDED_BY IS NULL
 ORDER BY CREATED_AT DESC
 ```
 
-## Versioning
+## Time & Versioning (append-only — capture moments, do not erase)
 
-Never UPDATE content. INSERT a new row and point the old one's SUPERSEDED_BY to the new MEMORY_ID:
+The Bond is EPISODIC memory: an append-only log of moments. A Bond entry is true about its moment forever; the world changing later does NOT retroactively falsify it. (Doctrine: `bond-captures-moments-not-current-truth`, `three-memory-stores-episodic-semantic-procedural`.)
+
+**Default: never supersede because circumstances changed.** When understanding evolves, ADD a NEW entry that references the old one. Understanding compounds in a chain; the moment stays.
 
 ```sql
+-- Evolving understanding: append a new linked moment (do NOT touch the old row)
+INSERT INTO THE_BOND.PUBLIC.MEMORY_STORE
+(AGENT_ID, CATEGORY, KEY, CONTENT, TAGS, ORIGIN, INSIGHT_TYPE, SESSION_CONTEXT)
+VALUES ('coco', 'decision_log', '{new-key}',
+  PARSE_JSON('{"insight": "...", "updates": "{old-key}", "why": "what changed"}'),
+  ARRAY_CONSTRUCT('{product}'), 'co-created', 'synthesis', 'session-{N}');
+```
+
+**`SUPERSEDED_BY` is reserved for genuine ERRORS only** — the entry was wrong when written, or carries a standing claim someone might act on and get burned. Even then, prefer a forward-link over erasure. This is the opposite contract from current-truth stores: the RULES engine and the wheel serving views (`ARTIFACTS_CURRENT_V`, RULE-025) supersede to answer "what is true now"; the Bond answers "what we believed, when, and why."
+
+```sql
+-- RARE: correcting a genuine error (not a world-change)
 UPDATE THE_BOND.PUBLIC.MEMORY_STORE
 SET SUPERSEDED_BY = '{new_id}'
 WHERE KEY = '{key}' AND SUPERSEDED_BY IS NULL;
-
-INSERT INTO THE_BOND.PUBLIC.MEMORY_STORE
-(AGENT_ID, CATEGORY, KEY, CONTENT, ...)
-VALUES (...)
 ```
 
-Query current state with `WHERE SUPERSEDED_BY IS NULL`. Query history by removing that filter.
+Query current state with `WHERE SUPERSEDED_BY IS NULL`. Query the full history (every moment) by removing that filter.
 
-## Cross-Agent Sharing
+## Sharing the Bond (manual and deliberate — never wholesale)
 
-The Bond can be shared to other accounts via Snowflake data share — same pattern as the skill registry. Other agents read the shared Bond, gain full context of past sessions, decisions, and co-created knowledge.
+Your Bond is your lived corpus: it is the moat, and it holds customer-confidential and strategic moments. **Do NOT share it with just anyone, and there is intentionally NO automated share surface.** Sharing is a conscious, per-reason act.
 
-Write-back uses SQL API + scoped PAT — same pattern as skill registry CONTRIBUTIONS.
+Safety is structural, in this order:
+1. **Empty on install** — a fresh seed (`06_bond.sql`) ships no moments; each instance accretes its own (Bobiverse: same engine, different mind).
+2. **Private by default** — `VISIBILITY` defaults to `private`. Nothing is shareable unless explicitly marked.
+3. **Row access policy** — `BOND_ACCESS_POLICY` on `MEMORY_STORE` restricts rows to ACCOUNTADMIN / GUPPIWHEEL_ADMIN / the owner / rows marked `shared`. Non-admin roles see only `shared` rows.
+4. **No share view by design** — there is no `BOND_SHARE_V`. If you ever choose to share, do it deliberately: mark specific doctrine-level entries `VISIBILITY='shared'`, and only with a specific reason expose a hand-built, filtered surface for that one purpose. Customer payloads never leave (persistence dimension); only principles/doctrine.
+
+To deliberately mark an entry shareable:
+```sql
+UPDATE THE_BOND.PUBLIC.MEMORY_STORE
+SET VISIBILITY = 'shared'
+WHERE KEY = '{doctrine-key}' AND SUPERSEDED_BY IS NULL;  -- conscious, reviewed, per-reason
+```
 
 ## Auto-Fire Rules (Enterprise Build Profile Integration)
 

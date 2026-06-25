@@ -12,7 +12,7 @@ Includes:
 - **Stewart** — propose-only grounding steward (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
 - **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023)
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
-- **The Bond** — shared cognition layer (separate database)
+- **The Bond** — the episodic-memory organ of the AILC: an append-only, co-created log of moments (`THE_BOND` database). Empty on install, private by default.
 - **GUPPI viewer** — Flask app rendering Command Center + Flywheel from `localhost:8888`
 
 ## Lifecycle
@@ -22,6 +22,14 @@ Initiate → Research → Building → Built → Narrated
 ```
 
 A Narrated artifact that spawns a follow-on creates a NEW artifact at Initiate. There is no "archived."
+
+## The Bond
+
+The Bond (`THE_BOND` database) is GuppiWheel's **episodic memory** — the third tier alongside the current-truth RULES engine and the procedural skills layer. It is an append-only log of co-created moments (decisions, corrections, synthesis) that preserves the *why* forever. See the `the-bond` skill for the operating model.
+
+- **Empty on install.** `06_bond.sql` ships the substrate only — no moments. Your instance accretes its own lived experience (Bobiverse: same engine, different mind).
+- **Private by default.** `VISIBILITY` defaults to `private` and a row access policy (`BOND_ACCESS_POLICY`) gates every row to admins, the owner, or rows explicitly marked `shared`. You do not share your Bond with just anyone — sharing is manual and deliberate, and there is **no automated share view by design** (the corpus is the moat and holds confidential moments).
+- **Append-only.** Moments are immutable; when understanding evolves you add a new linked entry rather than overwrite. `SUPERSEDED_BY` is reserved for genuine errors, not for "the world changed."
 
 ## Install (fresh account)
 
@@ -43,6 +51,7 @@ snow sql -f seeds/engine/02_rules.sql
 snow sql -f seeds/engine/03_procs.sql
 snow sql -f seeds/engine/04_semantic_view.sql
 snow sql -f seeds/engine/05_agents.sql      # requires an active warehouse (see prereqs)
+snow sql -f seeds/engine/06_bond.sql        # The Bond (episodic memory); ships EMPTY, private by default; requires an active warehouse
 
 # 3. Bootstrap content — ONE TIME only on fresh accounts (seeds the ID registry; no artifacts)
 snow sql -f seeds/content/bootstrap.sql
@@ -68,6 +77,7 @@ snow sql -f seeds/engine/02_rules.sql
 snow sql -f seeds/engine/03_procs.sql
 snow sql -f seeds/engine/04_semantic_view.sql
 snow sql -f seeds/engine/05_agents.sql
+snow sql -f seeds/engine/06_bond.sql
 
 # One-time upgrade migration
 snow sql -f seeds/upgrades/2.0.0-to-3.0.0.sql

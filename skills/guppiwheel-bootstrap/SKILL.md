@@ -23,6 +23,7 @@ snowsql -f seeds/engine/02_rules.sql    # Seeds platform rules (MERGE — safe t
 snowsql -f seeds/engine/03_procs.sql    # Creates the procedures (ADVANCE_STAGE gate, SUBMIT_INITIATIVE, PUBLISH_ARTIFACT, UPDATE_OWN_ARTIFACT — all EXECUTE AS OWNER)
 snowsql -f seeds/engine/04_semantic_view.sql
 snowsql -f seeds/engine/05_agents.sql
+snowsql -f seeds/engine/06_bond.sql     # The Bond (THE_BOND db) — episodic memory; ships EMPTY, private by default (row access policy), search bound to your active warehouse
 ```
 
 These are idempotent (CREATE IF NOT EXISTS, MERGE). Safe to re-run on an existing account to pick up new rules.

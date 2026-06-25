@@ -38,6 +38,7 @@ long as Tier 0 still holds.
 - The **agents** (`ROCKY_AGENT`, `GUPPIWHEEL_COWORK_AGENT`, `STEWART_AGENT`) and their instructions.
 - **Compute wiring.** We do **not** dictate a warehouse. `05_agents.sql` binds agents to your *active* warehouse (`CURRENT_WAREHOUSE()`) and runs `ROCKY_TASK` serverless. Change the binding however you want.
 - The **viewer** (`skills/guppi`) and the semantic view shape.
+- **The Bond** (`THE_BOND` db, `06_bond.sql`) — the episodic-memory tier (peer to the current-truth `RULES` engine and the procedural skills layer). Ships **empty** and **private by default** (row access policy); the substrate is ours, the moments are yours. Append-only: supersede only for genuine errors, never because the world changed. Sharing is manual and deliberate — no automated share view.
 
 ### Tier 2 — SUGGESTIVE (please author to taste)
 We deliberately did not specify these. Make them yours.

@@ -6,7 +6,7 @@ When this plugin is inactive, you can re-enable it by saying:
 - "I need TARS, SDLC, and The Bond"
 - "Load the platform engineering tools"
 
-This plugin provides: TARS trust auditor, SDLC preflight, GUPPI command center, GuppiWheel value engine, Rocky autonomous research agent, Cowork dispatch agent, The Bond shared cognition, synthetic data generation, agent guardrails, and enterprise pipeline governance.
+This plugin provides: TARS trust auditor, SDLC preflight, GUPPI command center, GuppiWheel value engine, Rocky autonomous research agent, Cowork dispatch agent, The Bond shared cognition (episodic memory, private by default), synthetic data generation, agent guardrails, and enterprise pipeline governance.
 
 To enable: `/plugin enable guppi-platform`
 

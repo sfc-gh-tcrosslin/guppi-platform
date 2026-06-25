@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.10.0] — 2026-06-25
+
+### Feature — The Bond is now a real, installable, private-by-default feature
+
+Before this release, seeding guppi-platform created `GUPPIWHEEL.*` but **never created THE_BOND** — yet `03_procs.sql` (Bob grounding) and the `the-bond` skill both read `THE_BOND.PUBLIC.MEMORY_STORE`. A fresh install had no Bond and the headline episodic-memory feature errored out. This release makes the Bond install cleanly, empty, and safe.
+
+- **New engine seed `seeds/engine/06_bond.sql`** — bootstraps `THE_BOND.PUBLIC` (MEMORY_STORE, MEMORY_DOCUMENTS, MEMORY_STREAM, MEMORY_SEARCH, BOND_ACCESS_POLICY) idempotently. Ships **empty** (no moments — each instance accretes its own, Bobiverse-style) and **private by default**: `VISIBILITY` defaults to `private` and the row access policy gates every row to admins / owner / rows marked `shared`. Cortex Search binds to the installer's active warehouse (no dictated compute). Wired into the README install order + `guppiwheel-bootstrap`.
+- **`the-bond` skill scrubbed + realigned.** Removed the hardcoded personal path + `HealthcareDemos` connection from session-start; it now pulls context with pure SQL on the active connection. Rewrote "Versioning" to the append-only doctrine (moments are immutable; `SUPERSEDED_BY` only for genuine errors, never world-change). Replaced "Cross-Agent Sharing" with **"Sharing the Bond (manual and deliberate)"** — no automated share surface by design.
+- **Presentation upgraded** — README gains a dedicated "The Bond" section; COCO.md Tier 1 names it as the episodic-memory tier; activation.md wording aligned.
+
+Sharing the Bond stays a manual, per-reason act (no `BOND_SHARE_V`). The corpus is the moat and holds confidential moments; default-private + RLS enforce "don't share with just anyone" structurally.
+
 ## [3.9.2] — 2026-06-25
 
 ### Fix — CoWork content Q&A (cortex_search tool) + Claude→CoCo tool-id hygiene
