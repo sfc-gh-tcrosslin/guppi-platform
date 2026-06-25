@@ -110,6 +110,6 @@ SELECT
 
 The plugin generated from DB state is a **snapshot**. To refresh:
 - Re-run bootstrap (overwrites local skill docs with latest from DB)
-- Or: pull from GitHub (JacinthLaval/guppi-platform) for the canonical version
+- Or: pull from GitHub (sfc-gh-tcrosslin/guppi-platform) for the canonical version
 
 The DB is the source of truth. GitHub is the distribution cache. Local plugin is the working copy.

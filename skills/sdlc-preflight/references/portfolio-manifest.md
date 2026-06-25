@@ -4,7 +4,7 @@ Master tracking for all CoCo healthcare portfolio repos. Updated by `$sdlc-prefl
 
 **Last updated**: 2026-04-21
 
-## Public Repos (GitHub: JacinthLaval)
+## Public Repos (GitHub: &lt;personal-github&gt;)
 
 | Repo | Type | Version | Last Push | README | Tests | Skill | CHANGELOG | Status |
 |------|------|---------|-----------|--------|-------|-------|-----------|--------|

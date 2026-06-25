@@ -439,7 +439,7 @@ This reminds you to run preflight checks before any push. The actual checks run 
 
 ## Dual-Remote Push
 
-Some repos are published to both a personal GitHub (JacinthLaval) and a Snowflake org GitHub (sfc-gh-tcrosslin). When pushing these repos, push to **both** remotes.
+Some repos are published to both a personal GitHub (&lt;personal-github&gt;) and a Snowflake org GitHub (sfc-gh-tcrosslin). When pushing these repos, push to **both** remotes.
 
 ### Setup (one-time per repo)
 
@@ -449,7 +449,7 @@ git remote add snowflake https://github.com/sfc-gh-tcrosslin/<repo-name>.git
 
 # Verify both remotes
 git remote -v
-# origin     https://github.com/JacinthLaval/<repo-name>.git (push)
+# origin     https://github.com/<personal-github>/<repo-name>.git (push)
 # snowflake  https://github.com/sfc-gh-tcrosslin/<repo-name>.git (push)
 ```
 
@@ -463,7 +463,7 @@ git push origin main && git push snowflake main
 
 ### Which Repos Have Dual Remotes
 
-| Repo | origin (JacinthLaval) | snowflake (sfc-gh-tcrosslin) |
+| Repo | origin (<personal-github>) | snowflake (sfc-gh-tcrosslin) |
 |------|----------------------|------------------------------|
 | ncpdp-f6-claims-engine | ✅ | ✅ |
 | coco-playbook | ✅ | ✅ |
@@ -476,7 +476,7 @@ git push origin main && git push snowflake main
 
 Add more repos to this table as they get dual remotes.
 
-**NOTE:** `gh auth switch --user JacinthLaval` is required before pushing to origin if the active account is sfc-gh-tcrosslin. Switch back after.
+**NOTE:** `gh auth switch --user <personal-github>` is required before pushing to origin if the active account is sfc-gh-tcrosslin. Switch back after.
 
 ## Snowflake-Solutions Sync (Separate from Dual-Remote Push)
 
@@ -489,7 +489,7 @@ Some skills/repos are **synced** to the Snowflake-Solutions org team incubator. 
 | **What** | Same code pushed to 2 personal/org repos | Subset of code mirrored into team shared repo |
 | **Direction** | Bidirectional (both are your repos) | One-way (your repo → team repo) |
 | **Trigger** | Manual push after preflight | Automated via GitHub Action on push to main |
-| **Accounts** | JacinthLaval + sfc-gh-tcrosslin | sfc-gh-tcrosslin → Snowflake-Solutions org |
+| **Accounts** | <personal-github> + sfc-gh-tcrosslin | sfc-gh-tcrosslin → Snowflake-Solutions org |
 | **Auth** | gh auth switch between accounts | INCUBATOR_PAT secret on source repo |
 | **When to use** | Every repo you own | Only skills/assets shared with the broader team |
 
@@ -504,7 +504,7 @@ Some skills/repos are **synced** to the Snowflake-Solutions org team incubator. 
 1. Create GitHub Action in source repo (`.github/workflows/sync-<name>.yml`)
 2. Set `INCUBATOR_PAT` secret on source repo (PAT with SSO auth for Snowflake-Solutions)
 3. Action clones target repo, copies files, commits with `[automated]` tag
-4. JacinthLaval is NOT involved in these syncs — this is sfc org-to-org only
+4. The personal account is NOT involved in these syncs — this is sfc org-to-org only
 
 ### Preflight Integration
 
@@ -512,7 +512,7 @@ When running preflight, note any active syncs in the report:
 
 ```
 Push targets:
-  → origin: https://github.com/JacinthLaval/coco-skills.git
+  → origin: https://github.com/<personal-github>/coco-skills.git
   → snowflake: https://github.com/sfc-gh-tcrosslin/coco-skills.git
 Syncs:
   → Snowflake-Solutions/health-sciences-coco-skills-incubator (tars-trust-auditor, automated)
@@ -524,7 +524,7 @@ When running preflight, Check 7 (Portfolio Manifest) should note which remotes t
 
 ```
 Push targets:
-  → origin: https://github.com/JacinthLaval/coco-playbook.git
+  → origin: https://github.com/<personal-github>/coco-playbook.git
   → snowflake: https://github.com/sfc-gh-tcrosslin/coco-playbook.git
 ```
 
