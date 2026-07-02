@@ -35,7 +35,7 @@ case "$EVENT" in
     cat <<EOF
 {
   "decision": "allow",
-  "systemMessage": "[guppi-platform] Session resumed. Phase: ${PHASE} | Active skill: ${SKILL} | State file: ${STATE_FILE}"
+  "systemMessage": "[guppi-platform] Session resumed. Phase: ${PHASE} | Active skill: ${SKILL} | State file: ${STATE_FILE}. [radar] Session-start check: query new items (GUPPIWHEEL.PUBLIC.RADAR_ITEMS WHERE DELIVERED=FALSE ORDER BY FOUND_AT DESC); if any, summarize them for the user and offer the rolling feed (CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH('NAR-RADAR')), then UPDATE those rows SET DELIVERED=TRUE. If none, stay silent."
 }
 EOF
     ;;

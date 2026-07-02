@@ -122,11 +122,31 @@ HANDLER = 'run'
 EXECUTE AS OWNER
 AS
 '
-import json
+import json, re, time
+
+def _agent_text(session, prompt):
+    payload = {"messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]}
+    try:
+        result = session.sql("SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(?, ?)",
+                             params=["GUPPIWHEEL.PUBLIC.ROCKY_AGENT", json.dumps(payload)]).collect()
+        response = str(result[0][0]) if result else "No response from agent"
+    except Exception as e:
+        return "Agent execution error: " + str(e)
+    text = response
+    try:
+        rj = json.loads(response)
+        parts = [it.get("text", "") for it in rj.get("content", []) if isinstance(it, dict) and it.get("type") == "text"]
+        if parts:
+            text = "\\n".join(parts)
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+    return text
+
 def run(session):
     rows = session.sql(
         "SELECT ID, TITLE, CONTENT:hypothesis::VARCHAR AS HYPOTHESIS, "
-        "CONTENT:instructions::VARCHAR AS INSTRUCTIONS, METADATA:priority::VARCHAR AS PRIORITY "
+        "CONTENT:instructions::VARCHAR AS INSTRUCTIONS, METADATA:priority::VARCHAR AS PRIORITY, "
+        "METADATA:swarm::BOOLEAN AS SWARM "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = ''INITIATIVE'' AND STAGE = ''Initiate'' "
         "ORDER BY METADATA:priority NULLS LAST, CREATED_AT LIMIT 1"
     ).collect()
@@ -137,49 +157,62 @@ def run(session):
     title = init["TITLE"]
     hypothesis = init["HYPOTHESIS"] or "N/A"
     instructions = init["INSTRUCTIONS"] or ""
+    priority = (init["PRIORITY"] or "").lower()
+    swarm = bool(init["SWARM"]) or (priority == "high")
     session.sql("UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET STAGE = ''Research'', UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?", params=[init_id]).collect()
-    prompt = (
-        "Execute this research initiative autonomously.\\n\\n"
-        "TITLE: " + title + "\\n"
-        "HYPOTHESIS: " + hypothesis + "\\n\\n"
-        "INSTRUCTIONS:\\n" + instructions + "\\n\\n"
-        "Use web search to find current, specific information.\\n"
-        "When complete provide:\\n"
-        "1. VERDICT (supported / partially supported / refuted)\\n"
-        "2. KEY FINDINGS (3-5 bullets with specifics)\\n"
-        "3. RECOMMENDED NEXT STEPS\\n\\n"
-        "IMPORTANT: Do NOT call submit_initiative. Provide research findings as text only."
-    )
-    message_payload = {"messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]}
-    message_json = json.dumps(message_payload)
-    try:
-        result = session.sql("SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(?, ?)",
-                             params=["GUPPIWHEEL.PUBLIC.ROCKY_AGENT", message_json]).collect()
-        response = str(result[0][0]) if result else "No response from agent"
-    except Exception as e:
-        response = "Agent execution error: " + str(e)
-    synthesis = response
-    try:
-        resp_json = json.loads(response)
-        text_parts = []
-        for item in resp_json.get("content", []):
-            if isinstance(item, dict) and item.get("type") == "text":
-                text_parts.append(item.get("text", ""))
-        if text_parts:
-            synthesis = "\\n".join(text_parts)
-    except (json.JSONDecodeError, KeyError, TypeError):
-        pass
+
+    base = ("TITLE: " + title + "\\nHYPOTHESIS: " + hypothesis + "\\n\\nINSTRUCTIONS:\\n" + instructions +
+            "\\n\\nUse web search to find current, specific information. Cite named sources, dates, numbers. "
+            "Do NOT call submit_initiative.")
+
+    method = "single"
+    conflicts = ""
+    if not swarm:
+        # --- SINGLE-PASS (Rocky default, unchanged behavior) ---
+        prompt = ("Execute this research initiative autonomously.\\n\\n" + base +
+                  "\\n\\nWhen complete provide: 1) VERDICT (supported / partially supported / refuted) "
+                  "2) KEY FINDINGS (3-5 bullets with specifics) 3) RECOMMENDED NEXT STEPS. Text only.")
+        synthesis = _agent_text(session, prompt)
+    else:
+        # --- SWARM (RULE-030, opt-in via metadata.swarm or priority=high; ArcticSwarm pattern) ---
+        method = "swarm"
+        run_id = init_id + "-" + str(int(time.time()))
+        roles = ["retriever", "counterexample-seeker", "consistency-checker"]
+        for role in roles:
+            rprompt = "ROLE: " + role + "\\n\\nExecute this research initiative in your role only.\\n\\n" + base
+            findings = _agent_text(session, rprompt)
+            session.sql("INSERT INTO GUPPIWHEEL.PUBLIC.ROCKY_EVIDENCE (RUN_ID, INIT_ID, ROLE, FINDINGS) VALUES (?, ?, ?, ?)",
+                        params=[run_id, init_id, role, (findings or "")[:12000]]).collect()
+        ev = session.sql("SELECT ROLE, FINDINGS FROM GUPPIWHEEL.PUBLIC.ROCKY_EVIDENCE WHERE RUN_ID = ? ORDER BY ROLE", params=[run_id]).collect()
+        board = "\\n\\n".join(["=== ROLE " + r["ROLE"] + " ===\\n" + (r["FINDINGS"] or "") for r in ev])
+        rec_prompt = ("You are the RECONCILER for an isolated multi-agent research swarm (ArcticSwarm pattern). "
+                      "The roles worked independently and could not see each other. Do NOT average or paper over disagreement. "
+                      "Return ONLY raw JSON (no markdown) with two keys: synthesis and conflicts. "
+                      "synthesis = the best-supported integrated answer as VERDICT / KEY FINDINGS (3-5 bullets with specifics) / RECOMMENDED NEXT STEPS. "
+                      "conflicts = explicit bullets where the retriever supporting evidence and the counterexample-seeker disconfirming evidence disagree, plus any consistency-checker flags; empty string if none.\\n\\n"
+                      "INITIATIVE: " + title + "\\n\\nISOLATED FINDINGS:\\n" + board)
+        rec = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?)", params=["claude-sonnet-4-5", rec_prompt]).collect()
+        rec_txt = str(rec[0][0]) if rec else ""
+        synthesis = rec_txt
+        m = re.search(r"\\{[\\s\\S]*\\}", rec_txt)
+        if m:
+            try:
+                j = json.loads(m.group(0))
+                synthesis = j.get("synthesis", rec_txt)
+                conflicts = j.get("conflicts", "") or ""
+            except Exception:
+                pass
+
     base_id = "RES-" + init_id.replace("INIT-", "") + "-ROCKY"
     res_id = base_id
     v = 2
     while session.sql("SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[res_id]).collect()[0]["C"] > 0:
         res_id = base_id + "-V" + str(v)
         v += 1
-    fw_content = json.dumps({"synthesis": synthesis[:12000], "executor": "rocky-cortex-agent-v3"})
-    fw_meta = json.dumps({"model": "auto", "has_web_search": True})
+    fw_content = json.dumps({"synthesis": (synthesis or "")[:12000], "conflicts": (conflicts or "")[:6000], "method": method, "executor": "rocky-cortex-agent-v4"})
+    fw_meta = json.dumps({"model": "auto", "has_web_search": True, "method": method, "pattern": "arcticswarm", "reconciler": ("claude-sonnet-4-5" if method == "swarm" else None)})
     try:
         # Single write chokepoint (RULE-029): delegate the RESEARCH INSERT to CREATE_ARTIFACT
-        # (res_id already de-duped above; passed as explicit id).
         wres = session.sql(
             "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, ?, ''Built'', NULL, ?, ?)",
             params=["RESEARCH", "Rocky Research: " + title[:200], fw_content, init_id, res_id, fw_meta]
@@ -194,7 +227,7 @@ def run(session):
     except Exception as e:
         return "ERROR writing research: " + str(e)
     session.sql("UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET STAGE = ''Built'', UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?", params=[init_id]).collect()
-    return "COMPLETE: " + init_id + " | " + title
+    return "COMPLETE (" + method + "): " + init_id + " | " + title
 ';
 
 -- =============================================================================
@@ -605,11 +638,12 @@ def _ai(session, model, prompt):
 
 def run(session, p_research_id, p_target, p_angle):
     rows = session.sql(
-        "SELECT TITLE, PARENT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN "
+        "SELECT TITLE, PARENT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN, CONTENT:conflicts::string AS CONFLICTS "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[p_research_id]).collect()
     if not rows:
         return {"error": "research not found", "id": p_research_id}
     init_id = rows[0]["PARENT_ID"]; synthesis = rows[0]["SYN"] or ""
+    conflicts = rows[0]["CONFLICTS"] or ""
     target = p_target or rows[0]["TITLE"]; angle = p_angle or ""
 
     gup = ""
@@ -638,7 +672,10 @@ def run(session, p_research_id, p_target, p_angle):
         "(3) exactly 4 MOVES, each a bold headline plus 1-2 sentences, honest about fit; (4) an HONEST BOUNDARY "
         "paragraph naming what Snowflake is NOT right for; (5) a WHY NOW close. Rules: no marketing fluff, no invented "
         "facts, use no numbers not in the grounding, and do NOT mention the word Guppi.\n\n")
-    grounding = ("TARGET: " + target + "\nANGLE: " + angle + "\n\nRESEARCH SYNTHESIS:\n" + synthesis[:8000] +
+    # RULE-030: when the research came from an isolated swarm, author from the surfaced
+    # disagreements too (not just the flattened synthesis). Disconfirmation is NOT re-run here.
+    conflicts_block = ("\n\nOPEN DISAGREEMENTS (from isolated swarm research - address the honest tension, do NOT paper over):\n" + conflicts[:3000]) if conflicts.strip() else ""
+    grounding = ("TARGET: " + target + "\nANGLE: " + angle + "\n\nRESEARCH SYNTHESIS:\n" + synthesis[:8000] + conflicts_block +
         "\n\nGUPPI CONTEXT:\n" + gup + "\n\nBOND:\n" + bond + "\n\nWEB GROUNDING BRIEF:\n" + brief[:4000])
     prompt = rubric + "GROUNDING:\n" + grounding
 
