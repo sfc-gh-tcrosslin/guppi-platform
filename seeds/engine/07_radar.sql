@@ -188,6 +188,19 @@ AS
 $$
 import json, re
 
+CHUNK = 8  # items per COMPLETE call — small enough that the model returns every item
+
+def _norm(u):
+    # normalize a URL for tolerant matching: drop scheme/www, query, fragment, trailing slash
+    u = (u or "").strip().lower()
+    for p in ("https://", "http://"):
+        if u.startswith(p):
+            u = u[len(p):]
+    if u.startswith("www."):
+        u = u[4:]
+    u = u.split("#", 1)[0].split("?", 1)[0]
+    return u.rstrip("/")
+
 def run(session):
     items = session.sql("SELECT URL_HASH, TITLE, SOURCE_NAME, WHY, URL FROM GUPPIWHEEL.PUBLIC.RADAR_ITEMS "
                         "WHERE RELEVANCE IS NULL AND FOUND_AT >= DATEADD('day', -7, CURRENT_TIMESTAMP()) ORDER BY FOUND_AT DESC").collect()
@@ -197,31 +210,39 @@ def run(session):
     inits = session.sql("SELECT ID, TITLE, STAGE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE='INITIATIVE' AND SUPERSEDED_BY IS NULL ORDER BY CREATED_AT DESC LIMIT 100").collect()
     ctx = "PRODUCTS:\n" + "\n".join(["- " + p["PRODUCT_ID"] + " (" + (p["NAME"] or "") + "): " + (p["D"] or "") for p in prods])
     ctx += "\n\nINITIATIVES (all stages):\n" + "\n".join(["- " + i["ID"] + " [" + (i["STAGE"] or "") + "] " + (i["TITLE"] or "") for i in inits])
-    lst = [{"url": it["URL"], "title": it["TITLE"], "source": it["SOURCE_NAME"], "why": it["WHY"]} for it in items]
-    prompt = ("You are Radar's analyst for a Snowflake healthcare team. Using ONLY the PORTFOLIO below (our products and initiatives), assess how each NEWS ITEM relates to OUR work and propose concrete next steps. "
-        "Reference our products/initiatives by id. A new capability may be a reason to REVISIT a past initiative or tell that customer they could up their game. Be specific and honest; use relevance=low if it is not really relevant. "
-        "Return ONLY a raw JSON array, one object per item in the same order, each "
-        "{\"url\":\"\",\"relevance\":\"high|medium|low\",\"related\":\"comma-separated product/INIT ids, or none\",\"actions\":\"1-2 concrete PROPOSED next steps tied to those ids; these are proposals, not approved work\"}.\n\n"
-        "PORTFOLIO:\n" + ctx[:8000] + "\n\nITEMS:\n" + json.dumps(lst)[:6000])
-    res = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?)", params=["claude-sonnet-4-5", prompt]).collect()
-    txt = str(res[0][0]) if res else ""
-    arr = []
-    mm = re.search(r"\[[\s\S]*\]", txt)
-    if mm:
-        try:
-            arr = json.loads(mm.group(0))
-        except Exception:
-            arr = []
-    by_url = {a.get("url"): a for a in arr if isinstance(a, dict)}
+    ctx = ctx[:8000]
+
     n = 0
-    for it in items:
-        a = by_url.get(it["URL"])
-        if not a:
-            continue
-        session.sql("UPDATE GUPPIWHEEL.PUBLIC.RADAR_ITEMS SET RELEVANCE=?, RELATED=?, ACTIONS=? WHERE URL_HASH=?",
-            params=[(a.get("relevance") or "")[:20], (a.get("related") or "")[:500], (a.get("actions") or "")[:2000], it["URL_HASH"]]).collect()
-        n += 1
-    return {"assessed": n, "candidates": len(items)}
+    batches = 0
+    for start in range(0, len(items), CHUNK):
+        chunk = items[start:start + CHUNK]
+        lst = [{"url": it["URL"], "title": it["TITLE"], "source": it["SOURCE_NAME"], "why": it["WHY"]} for it in chunk]
+        prompt = ("You are Radar's analyst for a Snowflake healthcare team. Using ONLY the PORTFOLIO below (our products and initiatives), assess how each NEWS ITEM relates to OUR work and propose concrete next steps. "
+            "Reference our products/initiatives by id. A new capability may be a reason to REVISIT a past initiative or tell that customer they could up their game. Be specific and honest; use relevance=low if it is not really relevant. "
+            "Return ONLY a raw JSON array with EXACTLY one object per item, in the SAME ORDER as given, each "
+            "{\"url\":\"<echo the item url exactly>\",\"relevance\":\"high|medium|low\",\"related\":\"comma-separated product/INIT ids, or none\",\"actions\":\"1-2 concrete PROPOSED next steps tied to those ids; these are proposals, not approved work\"}.\n\n"
+            "PORTFOLIO:\n" + ctx + "\n\nITEMS:\n" + json.dumps(lst))
+        res = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?)", params=["claude-sonnet-4-5", prompt]).collect()
+        txt = str(res[0][0]) if res else ""
+        arr = []
+        mm = re.search(r"\[[\s\S]*\]", txt)
+        if mm:
+            try:
+                arr = json.loads(mm.group(0))
+            except Exception:
+                arr = []
+        by_url = {_norm(a.get("url")): a for a in arr if isinstance(a, dict) and a.get("url")}
+        batches += 1
+        for j, it in enumerate(chunk):
+            a = by_url.get(_norm(it["URL"]))
+            if a is None and j < len(arr) and isinstance(arr[j], dict):
+                a = arr[j]  # positional fallback — model returned items in order but url drifted
+            if not a:
+                continue
+            session.sql("UPDATE GUPPIWHEEL.PUBLIC.RADAR_ITEMS SET RELEVANCE=?, RELATED=?, ACTIONS=? WHERE URL_HASH=?",
+                params=[(a.get("relevance") or "")[:20], (a.get("related") or "")[:500], (a.get("actions") or "")[:2000], it["URL_HASH"]]).collect()
+            n += 1
+    return {"assessed": n, "candidates": len(items), "batches": batches}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RADAR_ASSESS() TO ROLE GUPPIWHEEL_ADMIN;
 

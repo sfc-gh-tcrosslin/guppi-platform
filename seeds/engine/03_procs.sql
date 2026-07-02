@@ -741,11 +741,36 @@ def run(session, p_research_id, p_target, p_angle):
 
     results.sort(key=lambda x: (-x["avg_trust"], x["model"]))
     winner = results[0]["model"]; win_text = candidates[winner]
+
+    # Error-localization (ArcticSwarm "Agent GPA" style, ADVISORY): decompose the WINNER
+    # into atomic claims and label each grounded/unsupported/contradicted vs the grounding.
+    # RULE-023: judged by an INDEPENDENT model (never the author). Flag only - no rewrite,
+    # so we surface weak claims to a human without laundering the text.
+    loc_judge = next((m for m in models if m != winner), winner)
+    loc_prompt = ("You are an INDEPENDENT claim auditor. Decompose the NARRATIVE into atomic factual claims. "
+        "Judge EACH claim ONLY against the GROUNDING: 'grounded' = directly supported by grounding; 'unsupported' = "
+        "not present in grounding; 'contradicted' = conflicts with grounding. Return ONLY a raw JSON array, each "
+        "{\"claim\":\"<short quote>\",\"verdict\":\"grounded|unsupported|contradicted\",\"evidence\":\"<grounding quote or none>\"}.\n\n"
+        "GROUNDING:\n" + grounding[:8000] + "\n\nNARRATIVE:\n" + win_text[:6000])
+    claims = []
+    try:
+        lt = _ai(session, loc_judge, loc_prompt) or ""
+        i = lt.find("["); k = lt.rfind("]")
+        if i >= 0 and k > i:
+            claims = json.loads(lt[i:k+1], strict=False)
+    except Exception:
+        claims = []
+    claims = [c for c in claims if isinstance(c, dict)][:40]
+    unsupported = sum(1 for c in claims if str(c.get("verdict", "")).lower() == "unsupported")
+    contradicted = sum(1 for c in claims if str(c.get("verdict", "")).lower() == "contradicted")
+    localization = {"judge_model": loc_judge, "n_claims": len(claims),
+        "n_unsupported": unsupported, "n_contradicted": contradicted, "claims": claims}
+
     tag = (target.split()[0].lower() if target else "bob")
     nar_content = {"markdown": win_text, "target": target, "winner_model": winner}
     nar_meta = {"winner_model": winner, "run_id": run_id, "bakeoff": results,
         "grounding": {"research_id": p_research_id, "agent": "BOB_AGENT", "bond": True},
-        "no_guppi_mention": True, "built_by": "BOB_EXECUTE"}
+        "no_guppi_mention": True, "built_by": "BOB_EXECUTE", "claim_localization": localization}
     try:
         cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, NULL, ?, ?, 'Built', "
             "?, NULL, ?)",
@@ -758,6 +783,7 @@ def run(session, p_research_id, p_target, p_angle):
     except Exception as e:
         return {"error": "winner write failed: " + str(e)[:300], "run_id": run_id, "results": results}
 
-    return {"run_id": run_id, "winner_model": winner, "results": results, "narrative_id": nar_id, "audit_ids": audit_ids}
+    return {"run_id": run_id, "winner_model": winner, "results": results, "narrative_id": nar_id, "audit_ids": audit_ids,
+        "localization": {"judge": loc_judge, "n_claims": len(claims), "unsupported": unsupported, "contradicted": contradicted}}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;

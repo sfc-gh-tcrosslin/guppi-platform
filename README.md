@@ -1,4 +1,4 @@
-# guppi-platform v3.11.0
+# guppi-platform v3.12.0
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -11,7 +11,7 @@ Includes:
 - **Radar** — standing weekday scan of major AI blogs. Isolated per-source fetch (ArcticSwarm fan-out) → portfolio-grounded assessment (relevance + related initiatives + *proposed* actions) → one rolling narrative
 - **Cowork** — user-facing dispatch agent (submit, advance, query, publish)
 - **Stewart** — propose-only grounding steward (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
-- **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023)
+- **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023). Advisory *error-localization* on the winner: an independent model decomposes it into atomic claims and flags each grounded/unsupported/contradicted (ArcticSwarm "Agent GPA" pattern)
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
 - **The Bond** — the episodic-memory organ of the AILC: an append-only, co-created log of moments (`THE_BOND` database). Empty on install, private by default.
 - **GUPPI viewer** — Flask app rendering Command Center + Flywheel from `localhost:8888`
