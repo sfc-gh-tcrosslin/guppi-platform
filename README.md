@@ -1,4 +1,4 @@
-# guppi-platform v3.8.1
+# guppi-platform v3.11.0
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -7,7 +7,8 @@
 Brand hierarchy: **Guppi** (product) → **GuppiWheel** (engine / `GUPPIWHEEL` db) → **Rocky / Cowork / TARS / Stewart** (agents) → **CoCo** (interface).
 
 Includes:
-- **Rocky** — autonomous research Cortex Agent (server-side, serverless 5-min Task)
+- **Rocky** — autonomous research Cortex Agent (server-side, serverless 5-min Task). Opt-in *swarm* on hard research (`metadata.swarm` or `priority=high`): profiled, isolated roles reconciled by a different model, preserving conflicts — the ArcticSwarm isolate-then-reconcile pattern (RULE-030)
+- **Radar** — standing weekday scan of major AI blogs. Isolated per-source fetch (ArcticSwarm fan-out) → portfolio-grounded assessment (relevance + related initiatives + *proposed* actions) → one rolling narrative
 - **Cowork** — user-facing dispatch agent (submit, advance, query, publish)
 - **Stewart** — propose-only grounding steward (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
 - **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023)
