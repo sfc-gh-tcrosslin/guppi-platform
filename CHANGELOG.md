@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.13.0] — 2026-07-03
+
+### Feature — Prior-art search on new initiatives + Guppi viewer rewrite (SDLC + AILC)
+
+Two bodies of work. First, new initiatives now search the accumulated corpus for relevant prior art before Rocky researches them — the backlog never goes to zero, so choosing what to build should be informed by what we already know. Second, the Guppi viewer is rewritten from a 1066-line monolith into a maintainable Flask app with a deep-drill AILC view and a gated add-artifact form.
+
+- **Prior-art search (advisory, non-blocking).** `SUBMIT_INITIATIVE` (`03_procs.sql`) now runs a Cortex Search scan over the corpus and attaches the top hits to `metadata.related_prior_art`. `ROCKY_EXECUTE` injects those hits as grounding so Rocky builds on / cites existing work instead of starting cold. Proven end-to-end on INIT-62 ("auto-evolve our sub-agents"): 7 hits including the CoCoEvolve radar find; Rocky's `RES-62-ROCKY` explicitly cited it.
+- **Search services seeded (`07_radar.sql`).** `ARTIFACTS_SEARCH_SVC` (over `ARTIFACTS_SEARCH_V`, artifacts-only, INCREMENTAL, arctic-embed-m-v1.5) and a dedicated `RADAR_SEARCH_SVC` (over `RADAR_SEARCH_V`, RDR- pseudo-rows from `RADAR_ITEMS`). Radar finds are discoverable without being promoted to artifacts. Both were missing from seeds — a fresh install would have broken; now bootstrapped with a warehouse guard.
+- **Agent reconciliation (`05_agents.sql`).** Documented that `ROCKY_AGENT` is the current research agent (web_search), `GUPPIWHEEL_COWORK_AGENT` is dispatch, and the precursor `GUPPI.PLATFORM.ROCKY_AGENT` was dropped 2026-06-12. Clears up the naming overlap surfaced during Radar work.
+- **Guppi viewer rewrite.** `render_guppi.py` 1066 → ~215 lines: `query_guppi()` kept verbatim, inline HTML template extracted to `templates/index.html` + `static/guppi.{css,js}`. Three views — Command Center, **Classic (SDLC)** (kept deliberately: user stories / defects "before picture"), and **AILC** with drill-down from initiative all the way into story/narrative detail via a half-screen detail drawer. New gated **Add Artifact** form writes through `SUBMIT_INITIATIVE` (INITIATIVE) or `CREATE_ARTIFACT` (else) — the same chokepoint agents use (RULE-029). Product is a dropdown (no ad-hoc product creation); INITIATIVE keeps explicit Hypothesis + Instructions fields mapping to the proc params.
+- **Chore.** Untracked a stray committed `.pyc` (already in `.gitignore`).
+
 ## [3.10.1] — 2026-06-25
 
 ### Chore — scrub personal references from shipped skills

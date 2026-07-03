@@ -91,10 +91,31 @@ EXECUTE AS OWNER  -- RULE-028: procedure-mediated write; runs as owner so contri
 AS
 $$
 import json
+
+def _search(session, svc, qtext, cols, limit):
+    # Advisory prior-art lookup. Fails SAFE: never let a search hiccup block a submission.
+    try:
+        q = json.dumps({"query": (qtext or "")[:900], "columns": cols, "limit": limit})
+        r = session.sql("SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(?, ?)", params=[svc, q]).collect()
+        return json.loads(str(r[0][0])).get("results", []) or []
+    except Exception:
+        return []
+
 def run(session, title, hypothesis, instructions):
+    # Prior-art scan (advisory, non-blocking): search the wheel's own memory — RESEARCH/NARRATIVE
+    # artifacts AND Radar finds — so we surface what we already know instead of re-researching.
+    qtext = (title or "") + ". " + (hypothesis or "")
+    art = [{"id": h.get("ID"), "kind": h.get("TYPE"), "title": (h.get("TITLE") or "")[:160]}
+           for h in _search(session, "GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_SVC", qtext, ["ID", "TYPE", "TITLE"], 4)]
+    rad = [{"id": h.get("ID"), "kind": "RADAR:" + (h.get("SOURCE_NAME") or ""), "title": (h.get("TITLE") or "")[:160]}
+           for h in _search(session, "GUPPIWHEEL.PUBLIC.RADAR_SEARCH_SVC", qtext, ["ID", "TITLE", "SOURCE_NAME"], 3)]
+    prior = art + rad
+
     # Single write chokepoint (RULE-029): delegate INSERT + atomic INIT- allocation to CREATE_ARTIFACT.
     content = {"hypothesis": hypothesis or "", "instructions": instructions or ""}
     meta = {"priority": "P2", "submitted_via": "SUBMIT_INITIATIVE"}
+    if prior:
+        meta["related_prior_art"] = prior[:7]
     res = session.sql(
         "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, NULL, 'Initiate', NULL, NULL, ?)",
         params=["INITIATIVE", title, json.dumps(content), json.dumps(meta)]
@@ -107,7 +128,11 @@ def run(session, title, hypothesis, instructions):
     if isinstance(r, dict) and r.get("error"):
         return "ERROR: " + out
     init_id = r.get("artifact_id", "INIT-?") if isinstance(r, dict) else "INIT-?"
-    return "Submitted: " + init_id + " (Initiate). Rocky picks up within 5 minutes."
+    msg = "Submitted: " + init_id + " (Initiate). Rocky picks up within 5 minutes."
+    preview = art[:2] + rad[:2]
+    if preview:
+        msg += " | Related prior art (advisory): " + "; ".join([(p["id"] or "?") + " " + (p["title"] or "") for p in preview])
+    return msg
 $$;
 
 -- =============================================================================
@@ -146,7 +171,7 @@ def run(session):
     rows = session.sql(
         "SELECT ID, TITLE, CONTENT:hypothesis::VARCHAR AS HYPOTHESIS, "
         "CONTENT:instructions::VARCHAR AS INSTRUCTIONS, METADATA:priority::VARCHAR AS PRIORITY, "
-        "METADATA:swarm::BOOLEAN AS SWARM "
+        "METADATA:swarm::BOOLEAN AS SWARM, TO_JSON(METADATA:related_prior_art) AS PRIOR_ART "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = ''INITIATIVE'' AND STAGE = ''Initiate'' "
         "ORDER BY METADATA:priority NULLS LAST, CREATED_AT LIMIT 1"
     ).collect()
@@ -159,9 +184,14 @@ def run(session):
     instructions = init["INSTRUCTIONS"] or ""
     priority = (init["PRIORITY"] or "").lower()
     swarm = bool(init["SWARM"]) or (priority == "high")
+    prior_art = init["PRIOR_ART"]
+    pa_block = ""
+    if prior_art and str(prior_art).strip() not in ("", "null"):
+        pa_block = ("\\n\\nPRIOR ART ALREADY IN THE WHEEL (research syntheses and Radar finds we already have). "
+                    "Build on and CITE these by id; if this initiative substantially overlaps one, say so plainly and focus only on what is NEW. Do NOT re-research from scratch:\\n" + str(prior_art)[:2000])
     session.sql("UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET STAGE = ''Research'', UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?", params=[init_id]).collect()
 
-    base = ("TITLE: " + title + "\\nHYPOTHESIS: " + hypothesis + "\\n\\nINSTRUCTIONS:\\n" + instructions +
+    base = ("TITLE: " + title + "\\nHYPOTHESIS: " + hypothesis + "\\n\\nINSTRUCTIONS:\\n" + instructions + pa_block +
             "\\n\\nUse web search to find current, specific information. Cite named sources, dates, numbers. "
             "Do NOT call submit_initiative.")
 

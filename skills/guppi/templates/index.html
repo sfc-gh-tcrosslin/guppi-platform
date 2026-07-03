@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='4' y='4' width='10' height='10' rx='2' fill='%2314B8A6'/><rect x='18' y='4' width='10' height='10' rx='2' fill='%2314B8A6' opacity='0.7'/><rect x='4' y='18' width='10' height='10' rx='2' fill='%2314B8A6' opacity='0.7'/><rect x='18' y='18' width='10' height='10' rx='2' fill='%2314B8A6' opacity='0.4'/></svg>">
+<title>GUPPI — AILC Command Center</title>
+<link rel="stylesheet" href="/static/guppi.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="header-left">
+    <h1>GUPPI — <span>AILC Command Center</span></h1>
+    <div class="meta">Generated <span id="gen-time">—</span> &middot; user <span id="cur-user">—</span> &middot; every write flows through the gated wheel (RULE-029)</div>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn" id="add-btn" title="Add an artifact through the gated procs">+ Add Artifact</button>
+    <button class="btn" id="refresh-btn" title="Pull live data">&#8635; Refresh</button>
+  </div>
+</div>
+
+<div class="global-tabs">
+  <button class="global-tab active" data-view="command">Command Center</button>
+  <button class="global-tab" data-view="classic">Classic (SDLC)</button>
+  <button class="global-tab" data-view="ailc">AILC</button>
+</div>
+
+<!-- COMMAND CENTER -->
+<section id="view-command" class="view active">
+  <div class="kpis" id="kpis"></div>
+  <div class="section-note">The KPI landing. Classic is the "before" SDLC lens; AILC is the wheel — drill any initiative to the full detail of its stories, research, narratives, and audits.</div>
+  <div id="command-products"></div>
+</section>
+
+<!-- CLASSIC (SDLC) -->
+<section id="view-classic" class="view">
+  <div class="subtabs" id="classic-subtabs">
+    <button class="tab active" data-sub="stories">Stories</button>
+    <button class="tab" data-sub="defects">Defects</button>
+    <button class="tab" data-sub="incidents">Incidents</button>
+    <button class="tab" data-sub="audits">Audits</button>
+    <button class="tab" data-sub="skills">Skills</button>
+  </div>
+  <div id="classic-body"></div>
+</section>
+
+<!-- AILC -->
+<section id="view-ailc" class="view">
+  <div class="section-note">Initiatives are the entry points. Click to expand children, then click any artifact for its full detail.</div>
+  <div id="ailc-body"></div>
+</section>
+
+<!-- DETAIL DRAWER -->
+<div id="drawer-scrim" class="scrim"></div>
+<aside id="drawer" class="drawer">
+  <div class="drawer-head">
+    <div id="drawer-title" class="drawer-title">—</div>
+    <button class="drawer-close" id="drawer-close">&times;</button>
+  </div>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+
+<!-- ADD ARTIFACT MODAL -->
+<div id="modal-scrim" class="scrim"></div>
+<div id="add-modal" class="modal">
+  <div class="modal-head">
+    <div class="modal-title">Add Artifact</div>
+    <button class="drawer-close" id="add-close">&times;</button>
+  </div>
+  <div class="modal-body">
+    <div class="modal-note">Writes through <code>SUBMIT_INITIATIVE</code> (INITIATIVE) or <code>CREATE_ARTIFACT</code> (else) — the same gated path agents use. No direct table writes.</div>
+    <label>Type
+      <select id="f-type">
+        <option>INITIATIVE</option><option>STORY</option><option>EPIC</option>
+        <option>RESEARCH</option><option>DEFECT</option><option>INCIDENT</option><option>OUTCOME</option>
+      </select>
+    </label>
+    <label>Title <input id="f-title" type="text" placeholder="Short, specific title"></label>
+    <label>Product
+      <select id="f-product"><option value="">— none —</option></select>
+    </label>
+    <label id="wrap-hypothesis">Hypothesis <textarea id="f-hypothesis" rows="2" placeholder="INITIATIVE: what we believe / want to prove"></textarea></label>
+    <label id="wrap-instructions">Instructions <textarea id="f-instructions" rows="2" placeholder="INITIATIVE: how Rocky should research it"></textarea></label>
+    <label id="wrap-description">Description <textarea id="f-description" rows="3" placeholder="Body / description"></textarea></label>
+    <label id="wrap-parent">Parent ID <input id="f-parent" type="text" placeholder="e.g. INIT-36 (optional)"></label>
+    <label id="wrap-stage">Stage
+      <select id="f-stage"><option>Initiate</option><option>Research</option><option>Building</option><option>Built</option><option>Narrated</option></select>
+    </label>
+    <label>Tags <input id="f-tags" type="text" placeholder="comma,separated (optional)"></label>
+    <div id="add-result" class="add-result"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="add-cancel">Cancel</button>
+    <button class="btn primary" id="add-submit">Create through the wheel</button>
+  </div>
+</div>
+
+<script src="/static/guppi.js"></script>
+</body>
+</html>

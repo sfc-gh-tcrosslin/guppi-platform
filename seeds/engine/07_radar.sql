@@ -418,3 +418,81 @@ CREATE OR REPLACE TASK GUPPIWHEEL.PUBLIC.BLOGSCAN_TASK
   COMMENT = 'Radar: weekday 7am CST AI-blog scan (isolated per-source fetch -> dedupe -> daily digest). ArcticSwarm fan-out.'
 AS
   CALL GUPPIWHEEL.PUBLIC.RADAR_SCAN();
+
+-- =============================================================================
+-- CORTEX SEARCH — institutional-memory discoverability (prior-art at initiative time)
+-- Co-located here (not 01_schema) because RADAR_SEARCH_V depends on RADAR_ITEMS (above)
+-- and Cortex Search services must bind to the installer's active warehouse.
+-- TWO services on purpose: ARTIFACTS_SEARCH_SVC uses INCREMENTAL refresh over a
+-- FLATTEN/LISTAGG source; UNION-ing Radar items into it is NOT incrementally
+-- refreshable and breaks that dynamic table, so Radar gets its own simple service.
+-- SUBMIT_INITIATIVE queries BOTH for advisory prior-art. (ARTIFACTS_SEARCH_SVC was
+-- created out-of-band 2026-06-12; seeding it here gives fresh installs the search
+-- tool the Cowork agent already depends on.)
+-- =============================================================================
+EXECUTE IMMEDIATE $$
+DECLARE
+  no_wh EXCEPTION (-20037, 'No active warehouse. Run  USE WAREHOUSE <your_wh>;  then re-run 07_radar.sql');
+BEGIN
+  IF ((SELECT CURRENT_WAREHOUSE()) IS NULL) THEN RAISE no_wh; END IF;
+  RETURN 'warehouse OK';
+END;
+$$;
+SET wh = (SELECT CURRENT_WAREHOUSE());
+
+-- Artifacts corpus: full body of RESEARCH/NARRATIVE/STORY/etc. (flattened CONTENT).
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_V AS
+SELECT
+    a.ID, a.TYPE, a.TITLE, a.STAGE, a.OWNER, a.PARENT_ID, a.CREATED_AT, a.UPDATED_AT,
+    CONCAT(COALESCE(a.TITLE, ''), '\n\n', COALESCE(f.FLATTENED_TEXT, '')) AS SEARCH_TEXT,
+    ARRAY_TO_STRING(a.TAGS, ', ') AS TAGS_TEXT,
+    a.METADATA:"industry"::STRING AS INDUSTRY,
+    a.METADATA:"use_case"::STRING AS USE_CASE,
+    a.METADATA:"account"::STRING AS ACCOUNT
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+LEFT JOIN (
+    SELECT art.ID, LISTAGG(fl.key || ': ' || fl.value::STRING, '\n\n') AS FLATTENED_TEXT
+    FROM GUPPIWHEEL.PUBLIC.ARTIFACTS art, LATERAL FLATTEN(input => art.CONTENT) fl
+    GROUP BY art.ID
+) f ON a.ID = f.ID
+WHERE a.CONTENT IS NOT NULL AND a.SUPERSEDED_BY IS NULL;
+
+EXECUTE IMMEDIATE
+  'CREATE OR REPLACE CORTEX SEARCH SERVICE GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_SVC
+     ON SEARCH_TEXT
+     ATTRIBUTES TYPE, TITLE, STAGE, OWNER, TAGS_TEXT, INDUSTRY, USE_CASE, ACCOUNT
+     WAREHOUSE = ' || $wh || '
+     TARGET_LAG = ''1 hour''
+     REFRESH_MODE = INCREMENTAL
+     AS (
+       SELECT ID, TYPE, TITLE, STAGE, OWNER, SEARCH_TEXT, TAGS_TEXT, INDUSTRY, USE_CASE, ACCOUNT
+       FROM GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_V
+     )';
+
+-- Radar finds: separate simple (DT-friendly) service. Read-only discoverability;
+-- Radar items are NOT promoted to artifacts (one rolling NAR-RADAR by design).
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.RADAR_SEARCH_V AS
+SELECT
+    'RDR-' || LEFT(r.URL_HASH, 12) AS ID,
+    r.TITLE AS TITLE, r.URL AS URL, r.SOURCE_NAME AS SOURCE_NAME,
+    COALESCE(r.RELEVANCE,'') AS RELEVANCE, COALESCE(r.RELATED,'') AS RELATED, r.FOUND_AT AS FOUND_AT,
+    CONCAT(COALESCE(r.TITLE,''), '. ', COALESCE(r.WHY,''), ' Source: ', COALESCE(r.SOURCE_NAME,''),
+           '. Relates to: ', COALESCE(r.RELATED,''), '. Potential actions: ', COALESCE(r.ACTIONS,'')) AS SEARCH_TEXT
+FROM GUPPIWHEEL.PUBLIC.RADAR_ITEMS r
+WHERE r.URL IS NOT NULL;
+
+EXECUTE IMMEDIATE
+  'CREATE OR REPLACE CORTEX SEARCH SERVICE GUPPIWHEEL.PUBLIC.RADAR_SEARCH_SVC
+     ON SEARCH_TEXT
+     ATTRIBUTES ID, TITLE, URL, SOURCE_NAME, RELEVANCE, RELATED
+     WAREHOUSE = ' || $wh || '
+     TARGET_LAG = ''1 hour''
+     AS (
+       SELECT ID, TITLE, URL, SOURCE_NAME, RELEVANCE, RELATED, FOUND_AT, SEARCH_TEXT
+       FROM GUPPIWHEEL.PUBLIC.RADAR_SEARCH_V
+     )';
+
+GRANT USAGE ON CORTEX SEARCH SERVICE GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_SVC TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON CORTEX SEARCH SERVICE GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_SVC TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON CORTEX SEARCH SERVICE GUPPIWHEEL.PUBLIC.RADAR_SEARCH_SVC TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON CORTEX SEARCH SERVICE GUPPIWHEEL.PUBLIC.RADAR_SEARCH_SVC TO ROLE GUPPIWHEEL_CONTRIBUTOR;

@@ -8,6 +8,18 @@
 -- PREREQ: a warehouse must be active in this session before running this file:
 --   USE WAREHOUSE <your_wh>;
 -- The guard below fails loud if none is set.
+--
+-- AGENT ROLES (do not confuse these — the "Rocky" name has history):
+--   ROCKY_AGENT            — autonomous RESEARCH agent (web_search only). Driven by
+--                            ROCKY_EXECUTE (initiative research) and RADAR_SCAN (blog fetch).
+--                            NOT the old precursor: GUPPI.PLATFORM.ROCKY_AGENT was dropped
+--                            2026-06-12 during the GUPPIWHEEL consolidation.
+--   GUPPIWHEEL_COWORK_AGENT — user-facing DISPATCH agent (submit/advance/publish/create +
+--                            flywheel_query + search_artifacts). Does NOT web-search and does
+--                            NOT call ROCKY_AGENT. It writes an INITIATIVE via SUBMIT_INITIATIVE;
+--                            Rocky picks it up asynchronously via ROCKY_TASK (5-min poll).
+--   BOB_AGENT / STEWART_AGENT — Building-stage grounding scout / propose-only audit steward.
+-- The two never talk directly: the ARTIFACTS table + the task poll is the seam between them.
 -- =============================================================================
 
 -- --- Guard: require an active warehouse, then capture it -----------------------
