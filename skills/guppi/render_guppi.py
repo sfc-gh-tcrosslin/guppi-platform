@@ -363,11 +363,13 @@ def create_artifact_via_proc(payload):
         conn.close()
 
 
-def get_launch(artifact_id):
+def get_launch(artifact_id, ttl=86400):
+    """SHARE path: mint a presigned URL (or resolve identifier/url) via the gated proc.
+    ttl defaults to 24h since sharing externally is now a deliberate action."""
     conn = _connect()
     cur = conn.cursor()
     try:
-        cur.execute("CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(%s, %s)", (artifact_id, 3600))
+        cur.execute("CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(%s, %s)", (artifact_id, ttl))
         row = cur.fetchone()
         if row is None:
             return {"error": "no result"}
@@ -378,6 +380,50 @@ def get_launch(artifact_id):
             except Exception:
                 pass
         return payload
+    finally:
+        cur.close()
+        conn.close()
+
+
+def open_local(artifact_id):
+    """DEFAULT open path: download the launchable's staged file to a local dir using the
+    viewer's own Snowflake session (NO presigned URL / no external exposure) and open it.
+    For non-staged launchables (external_url / streamlit_url / cortex_agent), returns the
+    url/identifier so the frontend opens it directly (nothing to download)."""
+    import tempfile
+    import webbrowser
+    conn = _connect()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT METADATA FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = %s", (artifact_id,))
+        row = cur.fetchone()
+        if row is None:
+            return {"error": "artifact not found", "id": artifact_id}
+        meta = row[0]
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        launch = (meta or {}).get("launch") or {}
+        stage_path = launch.get("stage_path")
+        if stage_path:
+            local_dir = os.path.join(tempfile.gettempdir(), "guppi-launch")
+            os.makedirs(local_dir, exist_ok=True)
+            # GET the single staged file to the local dir (source of truth stays on stage).
+            cur.execute(f"GET {stage_path} 'file://{local_dir}'")
+            fname = stage_path.rstrip("/").split("/")[-1]
+            local_path = os.path.join(local_dir, fname)
+            if not os.path.exists(local_path):
+                return {"error": "download did not produce a local file", "stage_path": stage_path,
+                        "expected": local_path}
+            webbrowser.open(f"file://{local_path}")
+            return {"opened": local_path, "source": stage_path, "mode": "local_download"}
+        # Non-staged launchable: hand back the url/identifier for the frontend to open.
+        url = launch.get("url") or launch.get("identifier")
+        if url:
+            return {"url": url, "mode": "direct", "app_type": launch.get("app_type")}
+        return {"error": "no launch stage_path or url on artifact", "id": artifact_id, "launch": launch}
     finally:
         cur.close()
         conn.close()
@@ -431,9 +477,20 @@ def _make_app():
         code = 400 if isinstance(result, dict) and result.get("error") else 200
         return jsonify(result), code
 
+    @app.route("/api/open/<artifact_id>")
+    def api_open(artifact_id):
+        # DEFAULT: download the staged file locally + open it (no presigned URL).
+        return jsonify(open_local(artifact_id))
+
+    @app.route("/api/share/<artifact_id>")
+    def api_share(artifact_id):
+        # EXPLICIT: mint a presigned URL to share externally (24h TTL).
+        return jsonify(get_launch(artifact_id, 86400))
+
     @app.route("/api/launch/<artifact_id>")
     def api_launch(artifact_id):
-        return jsonify(get_launch(artifact_id))
+        # Back-compat alias -> share (presigned).
+        return jsonify(get_launch(artifact_id, 86400))
 
     return app
 

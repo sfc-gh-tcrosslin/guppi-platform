@@ -184,7 +184,8 @@
     if (a.owner) h.push('<span class="mono">' + esc(a.owner) + "</span>");
     h.push("</div>");
     if (LAUNCHABLE[a.type] || (a.metadata && a.metadata.launch)) {
-      h.push('<button class="btn primary" id="open-launch" data-id="' + esc(a.id) + '">Open launchable &#8599;</button>');
+      h.push('<div class="launch-row"><button class="btn primary" id="open-launch" data-id="' + esc(a.id) + '">Open &#8595;</button>' +
+             '<button class="btn ghost" id="share-launch" data-id="' + esc(a.id) + '">Share externally &#8599;</button></div>');
     }
     // lineage
     h.push('<div class="d-sec">Lineage</div>');
@@ -209,19 +210,46 @@
       h.push('<div class="d-sec">Metadata</div><pre class="code">' + esc(pretty(a.metadata)) + "</pre>");
     }
     $("#drawer-body").innerHTML = h.join("");
-    var ob = $("#open-launch"); if (ob) ob.addEventListener("click", function () { launch(ob.dataset.id); });
+    var ob = $("#open-launch"); if (ob) ob.addEventListener("click", function () { openLocal(ob.dataset.id); });
+    var sb = $("#share-launch"); if (sb) sb.addEventListener("click", function () { shareExternal(sb.dataset.id); });
     Array.prototype.forEach.call($("#drawer-body").querySelectorAll(".link-chip"), function (c) {
       c.addEventListener("click", function () { openDetail(c.dataset.open); });
     });
   }
   function pretty(v) { if (v == null) return "—"; try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); } }
-  function launch(id) {
-    if (!LIVE) { alert("Launch requires serve mode."); return; }
-    fetch("/api/launch/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (p) {
+  function toast(msg, ms) {
+    var t = document.getElementById("guppi-toast");
+    if (!t) { t = document.createElement("div"); t.id = "guppi-toast"; document.body.appendChild(t); }
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(t._timer); t._timer = setTimeout(function () { t.classList.remove("show"); }, ms || 4000);
+  }
+  // DEFAULT: download the staged file locally and open it (no presigned URL).
+  function openLocal(id) {
+    if (!LIVE) { alert("Open requires serve mode."); return; }
+    toast("Opening locally…");
+    fetch("/api/open/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (p) {
+      if (p && p.opened) toast("Opened locally: " + p.opened, 6000);
+      else if (p && p.url) { window.open(p.url, "_blank"); toast("Opened."); }
+      else toast("Open failed: " + JSON.stringify(p), 7000);
+    }).catch(function (e) { toast("Open failed: " + e, 7000); });
+  }
+  // EXPLICIT: mint a presigned URL and copy it to the clipboard for external sharing.
+  function shareExternal(id) {
+    if (!LIVE) { alert("Share requires serve mode."); return; }
+    toast("Minting share link…");
+    fetch("/api/share/" + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (p) {
       var url = p && (p.url || p.presigned_url || (p.launch && p.launch.url));
-      if (url) window.open(url, "_blank");
-      else alert("Launch info:\n" + JSON.stringify(p, null, 2));
-    }).catch(function (e) { alert("Launch failed: " + e); });
+      if (!url) { toast("No shareable URL: " + JSON.stringify(p), 7000); return; }
+      var ttl = (p && p.expires_in_seconds) ? Math.round(p.expires_in_seconds / 3600) + "h" : "~24h";
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(
+          function () { toast("Presigned link copied — expires in " + ttl, 6000); },
+          function () { window.prompt("Copy this presigned link (expires in " + ttl + "):", url); }
+        );
+      } else {
+        window.prompt("Copy this presigned link (expires in " + ttl + "):", url);
+      }
+    }).catch(function (e) { toast("Share failed: " + e, 7000); });
   }
 
   /* ---------- Add Artifact ---------- */

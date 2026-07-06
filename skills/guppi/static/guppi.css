@@ -14,6 +14,9 @@ h1 span{color:var(--blue)}
 .btn.primary{background:linear-gradient(135deg,var(--blue),#1a8fb8);color:#fff;border-color:var(--blue)}
 .btn.primary:hover{color:#fff;opacity:.92}
 .btn.ghost{background:transparent}
+.launch-row{display:flex;gap:.5rem;flex-wrap:wrap;margin:.2rem 0 .4rem}
+#guppi-toast{position:fixed;left:50%;bottom:1.4rem;transform:translateX(-50%) translateY(1rem);background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:.6rem 1rem;border-radius:8px;font-size:.8rem;max-width:80vw;box-shadow:0 6px 24px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:2000;word-break:break-word}
+#guppi-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 .global-tabs{display:flex;gap:0.5rem;margin-bottom:1.4rem;flex-wrap:wrap}
 .global-tab{padding:0.5rem 1.2rem;border-radius:8px;border:2px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:0.85rem;font-weight:700;transition:all .2s;letter-spacing:.3px}
