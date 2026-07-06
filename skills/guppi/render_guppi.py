@@ -390,7 +390,6 @@ def open_local(artifact_id):
     viewer's own Snowflake session (NO presigned URL / no external exposure) and open it.
     For non-staged launchables (external_url / streamlit_url / cortex_agent), returns the
     url/identifier so the frontend opens it directly (nothing to download)."""
-    import tempfile
     import webbrowser
     conn = _connect()
     cur = conn.cursor()
@@ -408,7 +407,7 @@ def open_local(artifact_id):
         launch = (meta or {}).get("launch") or {}
         stage_path = launch.get("stage_path")
         if stage_path:
-            local_dir = os.path.join(tempfile.gettempdir(), "guppi-launch")
+            local_dir = os.path.expanduser("~/Downloads")
             os.makedirs(local_dir, exist_ok=True)
             # GET the single staged file to the local dir (source of truth stays on stage).
             cur.execute(f"GET {stage_path} 'file://{local_dir}'")
