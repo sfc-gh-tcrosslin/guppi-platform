@@ -817,3 +817,74 @@ def run(session, p_research_id, p_target, p_angle):
         "localization": {"judge": loc_judge, "n_claims": len(claims), "unsupported": unsupported, "contradicted": contradicted}}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- MERGE_ARTIFACTS — reconcile a duplicate artifact into a survivor.
+-- TIER: Default (works on clone; adjust to taste).
+-- RULE-027: this proc sets SUPERSEDED_BY -> ORCHESTRATOR/ADMIN authority ONLY.
+--   NEVER grant to sub-agent/contributor roles (that would let a sub-agent kill
+--   doctrine/serving surfaces). Admin-only by grant + by intent.
+-- Behavior: re-parents the duplicate's DIRECT children onto the survivor, points
+--   the duplicate's SUPERSEDED_BY at the survivor (removing it from *_CURRENT_V
+--   views), and writes provenance breadcrumbs on both. Supersede-don't-destroy:
+--   nothing is deleted. Does NOT repoint metadata cross-refs (e.g. depends_on).
+-- Idempotent: refuses if the duplicate is already superseded, or if the survivor
+--   is itself superseded (merge only into a live artifact).
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.MERGE_ARTIFACTS(
+  P_DUPLICATE_ID VARCHAR,
+  P_SURVIVOR_ID  VARCHAR,
+  P_REASON       VARCHAR DEFAULT NULL
+)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+BEGIN
+  IF (:P_DUPLICATE_ID = :P_SURVIVOR_ID) THEN
+    RETURN 'ERROR: duplicate and survivor are the same id';
+  END IF;
+
+  LET dup_cnt INT := (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_DUPLICATE_ID);
+  LET surv_cnt INT := (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_SURVIVOR_ID);
+  IF (:dup_cnt = 0) THEN RETURN 'ERROR: duplicate not found: ' || :P_DUPLICATE_ID; END IF;
+  IF (:surv_cnt = 0) THEN RETURN 'ERROR: survivor not found: ' || :P_SURVIVOR_ID; END IF;
+
+  LET dup_sup VARCHAR := (SELECT SUPERSEDED_BY FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_DUPLICATE_ID);
+  LET surv_sup VARCHAR := (SELECT SUPERSEDED_BY FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_SURVIVOR_ID);
+  IF (:dup_sup IS NOT NULL) THEN RETURN 'ERROR: duplicate already superseded by ' || :dup_sup; END IF;
+  IF (:surv_sup IS NOT NULL) THEN RETURN 'ERROR: survivor is itself superseded by ' || :surv_sup || ' - merge into a live artifact'; END IF;
+
+  LET child_count INT := (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE PARENT_ID = :P_DUPLICATE_ID);
+
+  -- 1) re-parent the duplicate's direct children onto the survivor
+  UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
+     SET PARENT_ID = :P_SURVIVOR_ID, UPDATED_AT = CURRENT_TIMESTAMP()
+   WHERE PARENT_ID = :P_DUPLICATE_ID;
+
+  -- 2) supersede the duplicate + breadcrumb
+  UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
+     SET SUPERSEDED_BY = :P_SURVIVOR_ID,
+         METADATA = OBJECT_INSERT(
+                      OBJECT_INSERT(
+                        OBJECT_INSERT(COALESCE(METADATA, OBJECT_CONSTRUCT()),
+                                      'reconciled_into', :P_SURVIVOR_ID, TRUE),
+                        'reconciled_reason', COALESCE(:P_REASON, 'merged duplicate via MERGE_ARTIFACTS'), TRUE),
+                      'reconciled_at', CURRENT_TIMESTAMP()::STRING, TRUE),
+         UPDATED_AT = CURRENT_TIMESTAMP()
+   WHERE ID = :P_DUPLICATE_ID;
+
+  -- 3) breadcrumb on the survivor (append to absorbed_duplicates array)
+  UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
+     SET METADATA = OBJECT_INSERT(COALESCE(METADATA, OBJECT_CONSTRUCT()),
+                      'absorbed_duplicates',
+                      ARRAY_APPEND(COALESCE(METADATA:absorbed_duplicates::ARRAY, ARRAY_CONSTRUCT()), :P_DUPLICATE_ID),
+                      TRUE),
+         UPDATED_AT = CURRENT_TIMESTAMP()
+   WHERE ID = :P_SURVIVOR_ID;
+
+  RETURN 'OK: merged ' || :P_DUPLICATE_ID || ' -> ' || :P_SURVIVOR_ID
+      || ' (' || :child_count || ' child(ren) re-parented; duplicate superseded)';
+END;
+
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.MERGE_ARTIFACTS(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
