@@ -115,3 +115,13 @@ pre.code{background:var(--bg);border:1px solid var(--border);border-radius:6px;p
 .add-result.ok{color:var(--green)}
 .add-result.err{color:var(--red)}
 code{background:var(--surface2);padding:0.05rem 0.3rem;border-radius:3px;font-size:0.9em}
+
+/* AILC drill: Product > Initiative > Epic > Story */
+.prod{border:1px solid var(--border);border-radius:9px;margin-bottom:0.8rem;overflow:hidden;background:var(--surface2,rgba(255,255,255,.02))}
+.prod-head{display:grid;grid-template-columns:auto 1fr auto;gap:0.7rem;align-items:center;padding:0.75rem 1rem;cursor:pointer;font-weight:700}
+.prod-head:hover{background:rgba(41,181,232,.07)}
+.prod-title{font-size:0.95rem;letter-spacing:.01em}
+.prod-body{display:none;padding:0.6rem 0.8rem 0.8rem}
+.prod.open>.prod-body{display:block}
+.prod.open>.prod-head .twisty{transform:rotate(90deg)}
+.kidcount{opacity:.7;margin-right:0.4rem}

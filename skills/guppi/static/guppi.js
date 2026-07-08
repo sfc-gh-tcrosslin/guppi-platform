@@ -114,19 +114,41 @@
     var host = $("#ailc-body"); host.innerHTML = "";
     var inits = (DATA.flywheel || []).filter(function (a) { return a.type === "INITIATIVE"; });
     if (!inits.length) { host.innerHTML = '<div class="empty">No initiatives.</div>'; return; }
-    inits.forEach(function (it) {
-      var box = el("div", "init"); box.dataset.id = it.id;
-      var head = el("div", "init-head");
-      head.innerHTML = '<span class="twisty">&#9656;</span><span class="chip stage-' + esc(it.stage) + ' stage">' + esc(it.stage) +
-        '</span><span class="init-title">' + esc(it.title) + '</span><span class="mono">' + esc(it.id) + "</span>";
-      var tree = el("div", "tree");
-      head.addEventListener("click", function (ev) {
-        if (ev.target.classList.contains("mono") && ev.altKey) { openDetail(it.id); return; }
-        box.classList.toggle("open");
-        if (box.classList.contains("open") && !tree.dataset.built) { buildTree(tree, it.id); tree.dataset.built = "1"; }
-      });
-      box.appendChild(head); box.appendChild(tree); host.appendChild(box);
+    var UNASSIGNED = "\u2014 unassigned / discovery";
+    var byProd = {};
+    inits.forEach(function (it) { var p = it.product_id || UNASSIGNED; (byProd[p] = byProd[p] || []).push(it); });
+    var prodName = {}; (DATA.products || []).forEach(function (p) { prodName[p.id] = p.name || p.id; });
+    var keys = Object.keys(byProd).sort(function (a, b) {
+      if (a === UNASSIGNED) return 1; if (b === UNASSIGNED) return -1;
+      return byProd[b].length - byProd[a].length || (a < b ? -1 : 1);
     });
+    keys.forEach(function (pid) {
+      var label = (pid === UNASSIGNED) ? pid : (prodName[pid] || pid);
+      var pbox = el("div", "prod");
+      var phead = el("div", "prod-head");
+      phead.innerHTML = '<span class="twisty">&#9656;</span><span class="prod-title">' + esc(label) +
+        '</span><span class="mono kidcount">' + byProd[pid].length + " init</span>";
+      var pbody = el("div", "prod-body");
+      phead.addEventListener("click", function () { pbox.classList.toggle("open"); });
+      byProd[pid].forEach(function (it) { pbody.appendChild(initBox(it)); });
+      pbox.appendChild(phead); pbox.appendChild(pbody); host.appendChild(pbox);
+    });
+  }
+  function initBox(it) {
+    var box = el("div", "init"); box.dataset.id = it.id;
+    var head = el("div", "init-head");
+    var kidCount = (childrenOf[it.id] || []).length;
+    head.innerHTML = '<span class="twisty">&#9656;</span><span class="chip stage-' + esc(it.stage) + ' stage">' + esc(it.stage) +
+      '</span><span class="init-title">' + esc(it.title) + '</span>' +
+      (kidCount ? '<span class="mono kidcount">' + kidCount + ' \u25be</span>' : '') +
+      '<span class="mono">' + esc(it.id) + "</span>";
+    var tree = el("div", "tree");
+    head.addEventListener("click", function (ev) {
+      if (ev.target.classList.contains("mono") && ev.altKey) { openDetail(it.id); return; }
+      box.classList.toggle("open");
+      if (box.classList.contains("open") && !tree.dataset.built) { buildTree(tree, it.id); tree.dataset.built = "1"; }
+    });
+    box.appendChild(head); box.appendChild(tree); return box;
   }
   function buildTree(container, parentId, depth) {
     depth = depth || 0;

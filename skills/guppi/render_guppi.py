@@ -203,7 +203,8 @@ def query_guppi():
             SELECT ID, TYPE, STAGE, PARENT_ID, TITLE, TAGS, OWNER,
                    TO_VARCHAR(CREATED_AT, 'YYYY-MM-DD HH24:MI'),
                    METADATA,
-                   TO_VARCHAR(COALESCE(UPDATED_AT, CREATED_AT), 'YYYY-MM-DD HH24:MI')
+                   TO_VARCHAR(COALESCE(UPDATED_AT, CREATED_AT), 'YYYY-MM-DD HH24:MI'),
+                   COALESCE(PRODUCT_ID, '')
             FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
             WHERE SUPERSEDED_BY IS NULL
             ORDER BY COALESCE(UPDATED_AT, CREATED_AT) DESC
@@ -214,7 +215,8 @@ def query_guppi():
             flywheel.append({
                 "id": r[0], "type": r[1], "stage": r[2], "parent_id": r[3] or "",
                 "title": r[4] or "", "tags": tags, "owner": r[6] or "",
-                "created": r[7] or "", "metadata": meta, "updated": r[9] or ""
+                "created": r[7] or "", "metadata": meta, "updated": r[9] or "",
+                "product_id": r[10] or ""
             })
     except Exception as e:
         print(f"  WARNING: GUPPIWHEEL flywheel query failed ({e}). AILC tab will be empty.")
