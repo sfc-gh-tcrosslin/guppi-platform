@@ -125,3 +125,49 @@ code{background:var(--surface2);padding:0.05rem 0.3rem;border-radius:3px;font-si
 .prod.open>.prod-body{display:block}
 .prod.open>.prod-head .twisty{transform:rotate(90deg)}
 .kidcount{opacity:.7;margin-right:0.4rem}
+
+/* ---------- Outcomes scorecard ---------- */
+.chip.real{background:var(--green);color:#04201c}
+.chip.sim{background:var(--amber);color:#3a2600}
+.oc-card.featured{border-color:var(--green);box-shadow:0 2px 16px rgba(20,184,166,.16)}
+.oc-obj{color:var(--muted);font-size:0.8rem;line-height:1.5;margin:0.3rem 0 0.7rem}
+.oc-metrics{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:0.6rem}
+.oc-metric{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.7rem 0.9rem;min-width:120px;flex:1 1 120px;text-align:center}
+.oc-metric .val{font-size:1.5rem;font-weight:800;color:var(--blue)}
+.oc-metric .lbl{font-size:0.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:0.15rem}
+.oc-metric .lbl .u{text-transform:none;opacity:.75}
+.oc-mchip{margin-top:0.4rem}
+.oc-status{font-size:0.6rem;color:var(--muted);margin-top:0.35rem;line-height:1.3}
+.oc-chart{margin:0.8rem 0 0.4rem}
+.oc-chart-title{font-size:0.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:0.4rem}
+.oc-bars{display:flex;gap:3px;align-items:flex-end;height:90px}
+.oc-bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.oc-bar>i{width:100%;background:linear-gradient(180deg,var(--blue),#1a8fb8);border-radius:3px 3px 0 0;min-height:2px;display:block}
+.oc-bar>em{font-size:0.5rem;color:var(--muted);margin-top:0.2rem;font-style:normal;transform:rotate(-45deg);white-space:nowrap}
+.oc-gauge{margin:0.8rem 0}
+.oc-track{position:relative;height:12px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.oc-track .fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--green),var(--blue));border-radius:7px 0 0 7px}
+.oc-track .tick{position:absolute;top:-3px;width:2px;height:18px;transform:translateX(-1px)}
+.oc-track .tick.base{background:var(--muted)}
+.oc-track .tick.tgt{background:var(--yellow)}
+.oc-legend{font-size:0.62rem;color:var(--muted);margin-top:0.35rem}
+.oc-honesty{font-size:0.68rem;color:var(--muted);line-height:1.5;margin-top:0.7rem;border-top:1px solid var(--border);padding-top:0.6rem}
+/* spin trio (output/speed/cost) */
+.spin-trio{margin:0.9rem 0;padding:0.8rem;background:linear-gradient(135deg,rgba(20,184,166,.08),rgba(41,181,232,.06));border:1px solid var(--green);border-radius:10px}
+.spin-cells{display:flex;gap:0.8rem;margin-top:0.6rem;flex-wrap:wrap}
+.spin-cell{flex:1 1 120px;text-align:center;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:0.6rem 0.4rem}
+.spin-cell .role{display:block;font-size:0.58rem;text-transform:uppercase;letter-spacing:.8px;color:var(--green);font-weight:800}
+.spin-cell .v{display:block;font-size:1.9rem;font-weight:800;color:var(--blue);line-height:1.1;margin:0.15rem 0}
+.spin-cell .u{display:block;font-size:0.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.spin-note{font-size:0.64rem;color:var(--muted);line-height:1.5;margin-top:0.55rem}
+/* nested gears */
+.gear-strip{margin:0.9rem 0}
+.gears{display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap}
+.gear{flex:1 1 90px;text-align:center;border-radius:10px;padding:0.7rem 0.4rem;border:1px solid var(--border);background:var(--surface2)}
+.gear .gv{display:block;font-size:1.7rem;font-weight:800;line-height:1}
+.gear .gl{display:block;font-size:0.62rem;color:var(--text);margin-top:0.3rem;line-height:1.25}
+.gear .gw{display:block;font-size:0.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:0.2rem}
+.gear.inner{border-color:var(--blue)} .gear.inner .gv{color:var(--blue)}
+.gear.mid{border-color:var(--green)} .gear.mid .gv{color:var(--green)}
+.gear.outer{border-color:var(--yellow)} .gear.outer .gv{color:var(--yellow)}
+.gear-arrow{color:var(--muted);font-size:1.1rem;font-weight:700}

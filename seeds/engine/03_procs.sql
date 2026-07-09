@@ -73,6 +73,7 @@ def run(session, p_artifact_id, p_target_stage, p_override_reason):
         return json.dumps({"success": False, "blocked": True, "blockers": blockers, "warnings": warnings})
 
     session.sql("UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET STAGE = ?, UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?", params=[p_target_stage, p_artifact_id]).collect()
+    session.sql("INSERT INTO GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS (ARTIFACT_ID, ARTIFACT_TYPE, FROM_STAGE, TO_STAGE, OVERRIDE_REASON, SOURCE) VALUES (?, ?, ?, ?, ?, ''advance'')", params=[p_artifact_id, current_type, current_stage, p_target_stage, p_override_reason]).collect()
     return json.dumps({"success": True, "artifact_id": p_artifact_id, "from_stage": current_stage, "to_stage": p_target_stage, "warnings": warnings, "overrides_used": overrides_used})
 ';
 
@@ -179,6 +180,7 @@ def run(session):
         return "No queued initiatives."
     init = rows[0]
     init_id = init["ID"]
+    session.sql("ALTER SESSION SET QUERY_TAG = ''guppi:ROCKY_EXECUTE:" + init_id + "''").collect()
     title = init["TITLE"]
     hypothesis = init["HYPOTHESIS"] or "N/A"
     instructions = init["INSTRUCTIONS"] or ""
@@ -477,6 +479,12 @@ def _asobj(v, default):
             return default
     return default
 
+def _canon(o):
+    try:
+        return json.dumps(o, sort_keys=True, separators=(",", ":"), default=str)
+    except Exception:
+        return None
+
 def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_tags, p_explicit_id, p_metadata):
     t = (p_type or "").upper().strip()
     if t not in VALID_TYPES:
@@ -486,6 +494,29 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     stage = (p_stage if isinstance(p_stage, str) else None) or "Initiate"
     if stage not in VALID_STAGES:
         return {"error": "invalid STAGE", "got": stage, "allowed": sorted(VALID_STAGES)}
+
+    # --- DEDUP GUARD (idempotency; complements the single-write-path guarantee, RULE-029): reject byte-identical LIVE resubmits ---
+    # Keyed on (TYPE, TITLE, PARENT, OWNER, canonical CONTENT+METADATA) among non-superseded rows.
+    # No time window: identical live knowledge = one artifact. To re-create retired content,
+    # supersede the original first (SUPERSEDED_BY) and this check will no longer match.
+    # Runs BEFORE ID allocation so a deduped resubmit never burns a gap-free sequence number.
+    owner = session.sql("SELECT CURRENT_USER() AS C").collect()[0]["C"]
+    content = _asobj(p_content, {})
+    meta = _asobj(p_metadata, {})
+    norm_parent = p_parent_id.strip() if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None
+    inc_c, inc_m = _canon(content), _canon(meta)
+    dup_rows = session.sql(
+        "SELECT ID, TO_JSON(CONTENT) AS C, TO_JSON(METADATA) AS M "
+        "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+        "WHERE TYPE = ? AND TITLE = ? AND OWNER = ? AND SUPERSEDED_BY IS NULL "
+        "AND COALESCE(PARENT_ID, '~none~') = COALESCE(NULLIF(?, 'None'), '~none~')",
+        params=[t, p_title, owner, norm_parent]
+    ).collect()
+    for row in dup_rows:
+        if _canon(_asobj(row["C"], {})) == inc_c and _canon(_asobj(row["M"], {})) == inc_m:
+            return {"artifact_id": row["ID"], "type": t, "stage": stage, "owner": owner,
+                    "deduped": True,
+                    "note": "idempotent: byte-identical live artifact already exists; returned existing ID (no new row, no ID burned)"}
 
     if isinstance(p_explicit_id, str) and p_explicit_id.strip():
         new_id = p_explicit_id.strip()
@@ -536,6 +567,11 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
         "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), NULLIF(?, 'None'), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
         params=[new_id, t, stage, (p_parent_id if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None), p_title, owner,
                 json.dumps(content), json.dumps(tags), json.dumps(meta), prod_id]
+    ).collect()
+    session.sql(
+        "INSERT INTO GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS (ARTIFACT_ID, ARTIFACT_TYPE, FROM_STAGE, TO_STAGE, SOURCE) "
+        "SELECT ?, ?, NULL, ?, 'birth'",
+        params=[new_id, t, stage]
     ).collect()
     return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner, "product_id": prod_id}
 $$;
@@ -667,6 +703,7 @@ def _ai(session, model, prompt):
     return str(r[0]["R"]) if r and r[0]["R"] is not None else None
 
 def run(session, p_research_id, p_target, p_angle):
+    session.sql("ALTER SESSION SET QUERY_TAG = 'guppi:BOB_EXECUTE:" + str(p_research_id) + "'").collect()
     rows = session.sql(
         "SELECT TITLE, PARENT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN, CONTENT:conflicts::string AS CONFLICTS "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[p_research_id]).collect()

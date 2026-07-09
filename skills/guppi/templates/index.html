@@ -24,6 +24,7 @@
   <button class="global-tab active" data-view="command">Command Center</button>
   <button class="global-tab" data-view="classic">Classic (SDLC)</button>
   <button class="global-tab" data-view="ailc">AILC</button>
+  <button class="global-tab" data-view="outcomes">Outcomes</button>
 </div>
 
 <!-- COMMAND CENTER -->
@@ -49,6 +50,12 @@
 <section id="view-ailc" class="view">
   <div class="section-note">Initiatives are the entry points. Click to expand children, then click any artifact for its full detail.</div>
   <div id="ailc-body"></div>
+</section>
+
+<!-- OUTCOMES -->
+<section id="view-outcomes" class="view">
+  <div class="section-note">Outcomes are the center of the wheel: did the work move the metric? <b>OUT-2 is REAL</b> (the wheel measuring itself); <b>OUT-1 is SIMULATED</b> (FIMR). Metrics resolve live through <code>RESOLVE_APP_METRIC</code>.</div>
+  <div id="outcomes-body"></div>
 </section>
 
 <!-- DETAIL DRAWER -->

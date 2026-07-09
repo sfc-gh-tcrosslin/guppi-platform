@@ -166,6 +166,24 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.ARTIFACT_LAUNCHES (
 );
 
 -- =============================================================================
+-- STAGE_TRANSITIONS — timestamped log of every stage change (proc-written).
+-- Enables REAL cycle-time/speed metrics. Written by ADVANCE_STAGE ('advance')
+-- and CREATE_ARTIFACT ('birth'). Historical transitions are unrecoverable;
+-- speed accrues forward from install of this table.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS (
+    TRANSITION_ID   VARCHAR(36)   NOT NULL DEFAULT UUID_STRING() PRIMARY KEY,
+    ARTIFACT_ID     VARCHAR(64)   NOT NULL,
+    ARTIFACT_TYPE   VARCHAR(20),
+    FROM_STAGE      VARCHAR(20),
+    TO_STAGE        VARCHAR(20),
+    TRANSITIONED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    ACTOR           VARCHAR(200)  DEFAULT CURRENT_USER(),
+    OVERRIDE_REASON VARCHAR(4000),
+    SOURCE          VARCHAR(20)
+);
+
+-- =============================================================================
 -- PLUGIN_VERSION — what's installed
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PLUGIN_VERSION (
@@ -381,6 +399,7 @@ GRANT READ ON STAGE GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS TO ROLE GUPPIWHEEL_VIEWER;
 -- contributors are intentionally granted NOTHING on those tables. See skill: guppiwheel-governance.
 GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.VIOLATIONS TO ROLE GUPPIWHEEL_CONTRIBUTOR;       -- proc-written audit trail
 GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.ARTIFACT_LAUNCHES TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- proc-written
+GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- proc-written stage-change log
 GRANT INSERT, UPDATE ON TABLE GUPPIWHEEL.PUBLIC.PRODUCTS TO ROLE GUPPIWHEEL_CONTRIBUTOR;  -- product registry: contributors curate (reference data, not doctrine)
 GRANT READ, WRITE ON STAGE GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 -- NOTE: contributors are intentionally NOT granted direct DML on ID_CONVENTIONS, PLUGIN_VERSION,

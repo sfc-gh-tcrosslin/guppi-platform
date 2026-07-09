@@ -311,14 +311,122 @@
   }
   function setResult(msg, isErr) { var r = $("#add-result"); r.textContent = msg; r.className = "add-result " + (isErr ? "err" : "ok"); }
 
+  /* ---------- Outcomes scorecard ---------- */
+  var OUTCOMES = null;
+  function fmtVal(v) { return (v === null || v === undefined) ? "\u2014" : String(v); }
+  function ocChip(sim) { return sim ? '<span class="chip sim">SIMULATED</span>' : '<span class="chip real">REAL</span>'; }
+  function metricTile(m) {
+    return '<div class="oc-metric">'
+      + '<div class="val">' + esc(fmtVal(m.value)) + '</div>'
+      + '<div class="lbl">' + esc(m.name) + (m.unit ? ' <span class="u">(' + esc(m.unit) + ')</span>' : '') + '</div>'
+      + '<div class="oc-mchip">' + ocChip(m.is_simulated) + '</div>'
+      + (m.status ? '<div class="oc-status">' + esc(m.status) + '</div>' : '')
+      + '</div>';
+  }
+  function weeklyBars(weekly) {
+    if (!weekly || !weekly.length) return '';
+    var max = Math.max.apply(null, weekly.map(function (w) { return w.n; })) || 1;
+    var bars = weekly.map(function (w) {
+      var h = Math.round(100 * w.n / max);
+      return '<span class="oc-bar" title="' + esc(w.week) + ': ' + w.n + '"><i style="height:' + h + '%"></i><em>' + esc(String(w.week).slice(5)) + '</em></span>';
+    }).join("");
+    return '<div class="oc-chart"><div class="oc-chart-title">Artifacts created / week (real, last 12w)</div><div class="oc-bars">' + bars + '</div></div>';
+  }
+  function coverageGauge(m) {
+    if (!m || m.value === null || m.value === undefined) return '';
+    var base = (m.baseline != null) ? m.baseline : 0, tgt = (m.target != null) ? m.target : 100, cur = m.value;
+    function pct(x) { return Math.max(0, Math.min(100, x)); }
+    return '<div class="oc-gauge"><div class="oc-chart-title">' + esc(m.name) + '</div>'
+      + '<div class="oc-track"><i class="fill" style="width:' + pct(cur) + '%"></i>'
+      + (m.baseline != null ? '<b class="tick base" style="left:' + pct(base) + '%"></b>' : '')
+      + (m.target != null ? '<b class="tick tgt" style="left:' + pct(tgt) + '%"></b>' : '')
+      + '</div>'
+      + '<div class="oc-legend">baseline ' + esc(base) + ' &rarr; <b>now ' + esc(cur) + '</b> &rarr; target ' + esc(tgt) + '</div>'
+      + '</div>';
+  }
+  var SPIN_ALL = ['spins_4wk', 'median_spin_hrs', 'cost_per_spin', 'initiatives_built', 'outcomes_resolved'];
+  function mByName(metrics, name) { var f = null; (metrics || []).forEach(function (m) { if (m.name === name) f = m; }); return f; }
+  function spinCell(role, m, unitLabel) {
+    var v = m ? fmtVal(m.value) : "\u2014";
+    return '<div class="spin-cell"><span class="role">' + role + '</span><span class="v">' + esc(v) + '</span><span class="u">' + esc(unitLabel) + '</span></div>';
+  }
+  function spinTrio(metrics) {
+    var out = mByName(metrics, 'spins_4wk'), spd = mByName(metrics, 'median_spin_hrs'), cst = mByName(metrics, 'cost_per_spin');
+    if (!out && !spd && !cst) return '';
+    return '<div class="spin-trio">'
+      + '<div class="oc-chart-title">The spin, measured \u2014 output \u00b7 speed \u00b7 cost <span class="chip real">REAL</span></div>'
+      + '<div class="spin-cells">'
+      + spinCell('Output', out, 'spins / 28d')
+      + spinCell('Speed', spd, 'median hrs / spin')
+      + spinCell('Cost', cst, 'credits / spin')
+      + '</div>'
+      + '<div class="spin-note">A <b>spin</b> = one Narrative completed (Initiate \u2192 Research \u2192 Narrative Built). Speed &amp; cost accrue forward \u2014 they populate as newly stage-logged, QUERY_TAG-stamped spins complete (instrumentation live 2026-07-08).</div>'
+      + '</div>';
+  }
+  function gearCell(cls, m, label, win) {
+    var v = m ? fmtVal(m.value) : "\u2014";
+    return '<div class="gear ' + cls + '"><span class="gv">' + esc(v) + '</span><span class="gl">' + label + '</span><span class="gw">' + win + '</span></div>';
+  }
+  function gearStrip(metrics) {
+    var inner = mByName(metrics, 'spins_4wk'), mid = mByName(metrics, 'initiatives_built'), outer = mByName(metrics, 'outcomes_resolved');
+    if (!inner && !mid && !outer) return '';
+    return '<div class="gear-strip"><div class="oc-chart-title">Nested gears \u2014 how far the wheel turned</div>'
+      + '<div class="gears">'
+      + gearCell('inner', inner, 'Narrative spins<br>think', '28d')
+      + '<span class="gear-arrow">\u2192</span>'
+      + gearCell('mid', mid, 'Initiatives Built<br>deliver', 'all-time')
+      + '<span class="gear-arrow">\u2192</span>'
+      + gearCell('outer', outer, 'Outcomes Resolved<br>learn', 'all-time')
+      + '</div></div>';
+  }
+  function outcomeCard(o, weekly) {
+    var featured = !o.is_simulated;
+    var metrics = o.metrics || [];
+    var spinBlock = '', tiles;
+    if (featured) {
+      spinBlock = spinTrio(metrics) + gearStrip(metrics);
+      var rest = metrics.filter(function (m) { return SPIN_ALL.indexOf(m.name) < 0; });
+      tiles = rest.map(metricTile).join("");
+    } else {
+      tiles = metrics.map(metricTile).join("") || '<div class="empty">No metrics.</div>';
+    }
+    var cov = null;
+    metrics.forEach(function (m) { if (m.name === 'product_coverage_pct') cov = m; });
+    var extra = featured ? (coverageGauge(cov) + weeklyBars(weekly)) : '';
+    return '<div class="card oc-card' + (featured ? ' featured' : '') + '">'
+      + '<div class="c-head"><div class="c-title">' + esc(o.id) + ' \u2014 ' + esc(o.title) + '</div>' + ocChip(o.is_simulated) + '</div>'
+      + (o.objective ? '<div class="oc-obj">' + esc(o.objective) + '</div>' : '')
+      + spinBlock
+      + (tiles ? '<div class="oc-metrics">' + tiles + '</div>' : '')
+      + extra
+      + (o.honesty ? '<div class="oc-honesty"><b>Honesty:</b> ' + esc(o.honesty) + '</div>' : '')
+      + '</div>';
+  }
+  function paintOutcomes() {
+    var host = $("#outcomes-body"); if (!host) return;
+    if (!OUTCOMES) { host.innerHTML = '<div class="empty">Loading\u2026</div>'; return; }
+    var ocs = OUTCOMES.outcomes || [];
+    if (!ocs.length) { host.innerHTML = '<div class="empty">No outcomes yet.</div>'; return; }
+    host.innerHTML = ocs.map(function (o) { return outcomeCard(o, OUTCOMES.weekly_output); }).join("");
+  }
+  function renderOutcomes() {
+    if (OUTCOMES) { paintOutcomes(); return; }
+    if (window.__OUTCOMES__) { OUTCOMES = window.__OUTCOMES__; paintOutcomes(); return; }
+    paintOutcomes();
+    fetch("/api/outcomes").then(function (r) { return r.json(); }).then(function (d) { OUTCOMES = d; paintOutcomes(); })
+      .catch(function (e) { var h = $("#outcomes-body"); if (h) h.innerHTML = '<div class="empty">Failed to load outcomes: ' + esc(e) + '</div>'; });
+  }
+
   /* ---------- refresh + wiring ---------- */
   function refresh() {
     if (!LIVE) return Promise.resolve();
+    OUTCOMES = null;
     return fetch("/api/data").then(function (r) { return r.json(); }).then(function (d) { boot(d); });
   }
   function switchView(v) {
     Array.prototype.forEach.call(document.querySelectorAll(".global-tab"), function (b) { b.classList.toggle("active", b.dataset.view === v); });
     Array.prototype.forEach.call(document.querySelectorAll(".view"), function (s) { s.classList.toggle("active", s.id === "view-" + v); });
+    if (v === "outcomes") renderOutcomes();
   }
 
   function wire() {

@@ -430,10 +430,98 @@ def open_local(artifact_id):
         conn.close()
 
 
+def outcomes_scorecard():
+    """Live scorecard for TRACKED OUTCOMEs. For each outcome with a metric_app,
+    resolve every metric_export via the canonical RESOLVE_APP_METRIC proc (single
+    source of truth). Real outcomes first (is_simulated=FALSE), then simulated.
+    Also returns a REAL weekly-output series for the featured chart."""
+    conn = _connect()
+    cur = conn.cursor()
+
+    def _loads(s, d):
+        try:
+            return json.loads(s) if s else d
+        except Exception:
+            return d
+
+    try:
+        cur.execute("""
+            SELECT ID, TITLE, COALESCE(PRODUCT_ID,''), TO_JSON(CONTENT), TO_JSON(METADATA), STAGE
+            FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+            WHERE TYPE = 'OUTCOME' AND SUPERSEDED_BY IS NULL
+            ORDER BY METADATA:is_simulated NULLS FIRST, ID
+        """)
+        rows = cur.fetchall()
+        outcomes = []
+        for r in rows:
+            content = _loads(r[3], {}) or {}
+            meta = _loads(r[4], {}) or {}
+            is_sim = bool(meta.get("is_simulated", content.get("is_simulated", False)))
+            app_id = (meta.get("metric_app") or content.get("metric_app")
+                      or (content.get("metric") or {}).get("app_id"))
+            own = {}
+            for m in (content.get("metrics") or []):
+                if isinstance(m, dict) and m.get("name"):
+                    own[m["name"]] = m
+            metrics = []
+            if app_id:
+                cur.execute("SELECT TO_JSON(METADATA:metric_exports) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = %s", (app_id,))
+                mx_row = cur.fetchone()
+                mx = _loads(mx_row[0] if mx_row else None, []) or []
+                for mdef in mx:
+                    name = mdef.get("name")
+                    if not name:
+                        continue
+                    try:
+                        cur.execute("CALL GUPPIWHEEL.PUBLIC.RESOLVE_APP_METRIC(%s, %s, NULL)", (app_id, name))
+                        rr = cur.fetchone()
+                        val = _loads(rr[0], {}) if rr and isinstance(rr[0], str) else (rr[0] if rr else {})
+                    except Exception:
+                        val = {}
+                    if not isinstance(val, dict):
+                        val = {}
+                    o = own.get(name, {})
+                    metrics.append({
+                        "name": name,
+                        "description": mdef.get("description") or o.get("description") or "",
+                        "value": val.get("value"),
+                        "unit": val.get("unit") or mdef.get("unit") or "",
+                        "is_simulated": mdef.get("is_simulated", is_sim),
+                        "status": o.get("status") or "",
+                        "baseline": o.get("baseline"),
+                        "target": o.get("target"),
+                    })
+            outcomes.append({
+                "id": r[0], "title": r[1], "product_id": r[2], "stage": r[5],
+                "is_simulated": is_sim,
+                "objective": content.get("objective") or "",
+                "honesty": content.get("honesty") or "",
+                "app_id": app_id, "metrics": metrics,
+            })
+
+        cur.execute("""
+            SELECT TO_VARCHAR(DATE_TRUNC('week', CREATED_AT), 'YYYY-MM-DD') wk, COUNT(*) n
+            FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+            WHERE SUPERSEDED_BY IS NULL AND CREATED_AT >= DATEADD('week', -12, CURRENT_TIMESTAMP())
+            GROUP BY 1 ORDER BY 1
+        """)
+        weekly = [{"week": w[0], "n": int(w[1])} for w in cur.fetchall()]
+        return {"outcomes": outcomes, "weekly_output": weekly,
+                "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    finally:
+        cur.close()
+        conn.close()
+
+
 def render_snapshot():
     """Read-only self-contained snapshot: inlines the data payload so client-side drill
     works from file://. Add/launch require --serve. Written to OUTPUT_PATH."""
     data = query_guppi()
+    try:
+        oc = outcomes_scorecard()
+    except Exception as e:
+        print(f"  WARNING: outcomes_scorecard failed ({e}). Outcomes tab will be empty in snapshot.")
+        oc = {"outcomes": [], "weekly_output": []}
     with open(os.path.join(BASE_DIR, "templates", "index.html")) as f:
         shell = f.read()
     with open(os.path.join(BASE_DIR, "static", "guppi.css")) as f:
@@ -444,7 +532,9 @@ def render_snapshot():
     html = (shell
             .replace('<link rel="stylesheet" href="/static/guppi.css">', "<style>" + css + "</style>")
             .replace('<script src="/static/guppi.js"></script>',
-                     "<script>window.__SNAPSHOT__=" + json.dumps(data, default=str) + ";</script><script>" + js + "</script>"))
+                     "<script>window.__SNAPSHOT__=" + json.dumps(data, default=str)
+                     + ";window.__OUTCOMES__=" + json.dumps(oc, default=str)
+                     + ";</script><script>" + js + "</script>"))
     with open(OUTPUT_PATH, "w") as f:
         f.write(html)
     print(f"  Snapshot written: {OUTPUT_PATH} ({len(html)//1024}KB, read-only)")
@@ -463,6 +553,10 @@ def _make_app():
     @app.route("/api/data")
     def api_data():
         return jsonify(query_guppi())
+
+    @app.route("/api/outcomes")
+    def api_outcomes():
+        return jsonify(outcomes_scorecard())
 
     @app.route("/api/artifact/<artifact_id>")
     def api_artifact(artifact_id):
