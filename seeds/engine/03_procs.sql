@@ -561,22 +561,126 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
         if chk and chk[0]["C"] > 0:
             prod_id = prod
 
-    session.sql(
-        "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS "
-        "(ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, TAGS, METADATA, PRODUCT_ID, CREATED_AT, UPDATED_AT) "
-        "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), NULLIF(?, 'None'), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
-        params=[new_id, t, stage, (p_parent_id if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None), p_title, owner,
-                json.dumps(content), json.dumps(tags), json.dumps(meta), prod_id]
-    ).collect()
-    session.sql(
-        "INSERT INTO GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS (ARTIFACT_ID, ARTIFACT_TYPE, FROM_STAGE, TO_STAGE, SOURCE) "
-        "SELECT ?, ?, NULL, ?, 'birth'",
-        params=[new_id, t, stage]
-    ).collect()
-    return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner, "product_id": prod_id}
+    norm_parent_val = (p_parent_id if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None)
+
+    # INIT-75 Thread A: birth-hash chain. Serialize on the CHAIN_HEAD row lock (bare INSERTs are NOT
+    # mutually serialized in Snowflake), read prev, hash the birth bundle with the SAME _canon used by
+    # the dedup guard, then insert + advance head atomically. Dedup guard above returns before here, so
+    # a deduped resubmit never burns a link. ROW_HASH = SHA2_HEX(_canon({"rec": bundle, "prev": prev})).
+    session.sql("BEGIN").collect()
+    try:
+        session.sql("UPDATE GUPPIWHEEL.PUBLIC.CHAIN_HEAD SET LAST_HASH = LAST_HASH WHERE CHAIN_ID = 'main'").collect()
+        prev_hash = session.sql("SELECT LAST_HASH AS H FROM GUPPIWHEEL.PUBLIC.CHAIN_HEAD WHERE CHAIN_ID = 'main'").collect()[0]["H"]
+        bundle = {"id": new_id, "type": t, "title": p_title, "owner": owner,
+                  "parent_id": norm_parent_val, "content": content, "metadata": meta}
+        row_hash = session.sql("SELECT SHA2_HEX(?) AS H", params=[_canon({"rec": bundle, "prev": prev_hash})]).collect()[0]["H"]
+        session.sql(
+            "INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS "
+            "(ID, TYPE, STAGE, PARENT_ID, TITLE, OWNER, CONTENT, TAGS, METADATA, PRODUCT_ID, PREV_HASH, ROW_HASH, CREATED_AT, UPDATED_AT) "
+            "SELECT ?, ?, ?, NULLIF(?, 'None'), ?, ?, PARSE_JSON(?), PARSE_JSON(?)::ARRAY, PARSE_JSON(?), NULLIF(?, 'None'), NULLIF(?, 'None'), ?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()",
+            params=[new_id, t, stage, norm_parent_val, p_title, owner,
+                    json.dumps(content), json.dumps(tags), json.dumps(meta), prod_id, prev_hash, row_hash]
+        ).collect()
+        session.sql("UPDATE GUPPIWHEEL.PUBLIC.CHAIN_HEAD SET LAST_HASH = ? WHERE CHAIN_ID = 'main'", params=[row_hash]).collect()
+        session.sql(
+            "INSERT INTO GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS (ARTIFACT_ID, ARTIFACT_TYPE, FROM_STAGE, TO_STAGE, SOURCE) "
+            "SELECT ?, ?, NULL, ?, 'birth'",
+            params=[new_id, t, stage]
+        ).collect()
+        session.sql("COMMIT").collect()
+    except Exception as e:
+        session.sql("ROLLBACK").collect()
+        return {"error": "chain-insert failed", "detail": str(e), "id": new_id}
+    return {"artifact_id": new_id, "type": t, "stage": stage, "owner": owner, "product_id": prod_id, "row_hash": row_hash}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- =============================================================================
+-- VERIFY_CHAIN — INIT-75 Thread A deep tamper audit. Walks the birth-hash chain by LINKAGE
+-- (prev_hash -> row_hash), NOT by any sequence/timestamp column (Snowflake AUTOINCREMENT and
+-- CREATED_AT are not reliable chain order). Recomputes each ROW_HASH from the stored birth bundle
+-- with the SAME _canon as CREATE_ARTIFACT and reports the first break. Detects content tamper,
+-- reorder/relink (fork), deletion, out-of-band insertion, and identity-field tamper. Read-only.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.VERIFY_CHAIN()
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+
+def _asobj(v, default):
+    if v is None:
+        return default
+    if isinstance(v, (dict, list)):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return default
+    return default
+
+def _canon(o):
+    try:
+        return json.dumps(o, sort_keys=True, separators=(",", ":"), default=str)
+    except Exception:
+        return None
+
+def run(session):
+    rows = session.sql(
+        "SELECT ID, TYPE, TITLE, OWNER, PARENT_ID, TO_JSON(CONTENT) AS C, TO_JSON(METADATA) AS M, "
+        "PREV_HASH, ROW_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL"
+    ).collect()
+    total = len(rows)
+    if total == 0:
+        return {"ok": True, "total": 0, "note": "chain not initialized"}
+
+    unhashed = session.sql("SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NULL").collect()[0]["C"]
+
+    by_prev = {}
+    for r in rows:
+        key = r["PREV_HASH"] if r["PREV_HASH"] else None
+        by_prev.setdefault(key, []).append(r)
+
+    genesis = by_prev.get(None, [])
+    if len(genesis) != 1:
+        return {"ok": False, "reason": "genesis_count!=1", "genesis_found": len(genesis), "total": total, "unhashed_rows": unhashed}
+
+    expected_prev = None
+    count = 0
+    while True:
+        matches = by_prev.get(expected_prev, [])
+        if len(matches) == 0:
+            break
+        if len(matches) > 1:
+            return {"ok": False, "reason": "fork", "at_prev_hash": expected_prev,
+                    "fork_ids": [m["ID"] for m in matches], "checked": count}
+        r = matches[0]
+        bundle = {"id": r["ID"], "type": r["TYPE"], "title": r["TITLE"], "owner": r["OWNER"],
+                  "parent_id": r["PARENT_ID"], "content": _asobj(r["C"], {}), "metadata": _asobj(r["M"], {})}
+        expected_row = session.sql("SELECT SHA2_HEX(?) AS H",
+                                   params=[_canon({"rec": bundle, "prev": expected_prev})]).collect()[0]["H"]
+        if expected_row != r["ROW_HASH"]:
+            return {"ok": False, "reason": "row_hash_mismatch", "first_break_id": r["ID"],
+                    "expected": expected_row, "stored": r["ROW_HASH"], "checked": count}
+        count += 1
+        expected_prev = r["ROW_HASH"]
+        if count > total:
+            return {"ok": False, "reason": "cycle_detected", "checked": count}
+
+    if count != total:
+        return {"ok": False, "reason": "unreachable_rows(orphan/deletion/reorder)",
+                "reachable": count, "total": total}
+    return {"ok": True, "total": total, "head": expected_prev, "unhashed_rows": unhashed}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.VERIFY_CHAIN() TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.VERIFY_CHAIN() TO ROLE GUPPIWHEEL_VIEWER;
 
 -- =============================================================================
 -- STEWART_AUDIT — Stewart's read-only grounding/hygiene scan (RULE-027).

@@ -42,6 +42,25 @@ ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ALTER COLUMN ID SET DATA TYPE VARCHAR(64
 ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ALTER COLUMN PARENT_ID SET DATA TYPE VARCHAR(64);
 ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ALTER COLUMN SUPERSEDED_BY SET DATA TYPE VARCHAR(64);
 
+-- INIT-75 Thread A: birth-hash provenance chain (tamper-evidence; NOT blockchain -- single write
+-- authority via CREATE_ARTIFACT). PREV_HASH links to the prior birth's ROW_HASH; each new birth's
+-- ROW_HASH = SHA2_HEX(_canon({"rec": birth-bundle, "prev": PREV_HASH})). Set ONCE at birth and never
+-- rewritten (supersede stays a logical pointer). Idempotent ADD COLUMN on re-run.
+ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ADD COLUMN IF NOT EXISTS PREV_HASH VARCHAR(64);
+ALTER TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS ADD COLUMN IF NOT EXISTS ROW_HASH  VARCHAR(64);
+
+-- CHAIN_HEAD — single-row serialization point for the birth-hash chain (INIT-75). CREATE_ARTIFACT
+-- locks this row (UPDATE) before it reads prev + inserts the new birth, forcing concurrent births to
+-- serialize: bare INSERTs are NOT mutually serialized in Snowflake, so ordering must be enforced here.
+-- One logical chain: CHAIN_ID = 'main'. Proven under 8-way concurrency in the CHAIN_LAB prototype.
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.CHAIN_HEAD (
+    CHAIN_ID   VARCHAR(20) NOT NULL PRIMARY KEY,
+    LAST_HASH  VARCHAR(64)
+);
+MERGE INTO GUPPIWHEEL.PUBLIC.CHAIN_HEAD t
+USING (SELECT 'main' AS CHAIN_ID) s ON t.CHAIN_ID = s.CHAIN_ID
+WHEN NOT MATCHED THEN INSERT (CHAIN_ID, LAST_HASH) VALUES ('main', NULL);
+
 -- =============================================================================
 -- RULES — governance as data
 -- =============================================================================
@@ -300,6 +319,27 @@ SELECT ID, COUNT(*) AS row_count, LISTAGG(DISTINCT TYPE, ',') AS types,
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
 GROUP BY ID HAVING COUNT(*) > 1;
 
+-- CHAIN_INTEGRITY_V — structural tripwire for the birth-hash chain (INIT-75 Thread A). Pure-SQL checks
+-- that need no hash recompute; deep content re-hash lives in the VERIFY_CHAIN proc (canon is Python).
+-- Once baselined, healthy = genesis_count is exactly 1 and every other signal is n=0.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.CHAIN_INTEGRITY_V AS
+WITH hashed AS (SELECT ID, PREV_HASH, ROW_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL)
+SELECT 'unhashed_rows' AS signal, COUNT(*) AS n,
+       LISTAGG(ID, ', ') WITHIN GROUP (ORDER BY ID) AS detail
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NULL
+UNION ALL
+SELECT 'genesis_count', (SELECT COUNT(*) FROM hashed WHERE PREV_HASH IS NULL), ''
+UNION ALL
+SELECT 'forked_prev', COUNT(*), LISTAGG(PREV_HASH, ', ')
+FROM (SELECT PREV_HASH FROM hashed WHERE PREV_HASH IS NOT NULL GROUP BY PREV_HASH HAVING COUNT(*) > 1)
+UNION ALL
+SELECT 'dangling_prev', COUNT(*), LISTAGG(h.ID, ', ') WITHIN GROUP (ORDER BY h.ID)
+FROM hashed h WHERE h.PREV_HASH IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM hashed p WHERE p.ROW_HASH = h.PREV_HASH)
+UNION ALL
+SELECT 'dup_row_hash', COUNT(*), LISTAGG(ROW_HASH, ', ')
+FROM (SELECT ROW_HASH FROM hashed GROUP BY ROW_HASH HAVING COUNT(*) > 1);
+
 -- GROUNDING_HEALTH_V — Stewart's senses (RULE-027). Deterministic grounding/hygiene drift signals; healthy = all N=0.
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.GROUNDING_HEALTH_V AS
 WITH canon_type AS (
@@ -374,7 +414,19 @@ SELECT 'rules-present', 'Tier0 #5 (doctrine is data)',
        IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.RULES WHERE ENABLED = TRUE) > 0, 'PASS', 'FAIL')
 UNION ALL
 SELECT 'no-share-leak', 'Tier0 confidentiality (product share boundary, STO-SUBSTRATE-8)',
-       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V) = 0, 'PASS', 'FAIL');
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V) = 0, 'PASS', 'FAIL')
+UNION ALL
+-- INIT-75 Thread A: structural chain health. Tolerant of a not-yet-baselined chain (zero hashed rows
+-- = feature inactive = PASS). Once baselined: exactly 1 genesis, no fork/dangling/dup, no unhashed rows.
+SELECT 'chain-structural-intact', 'INIT-75 Thread A (birth-hash chain: 1 genesis, no fork/dangling/dup/unhashed)',
+       IFF(
+         (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL) = 0
+         OR (
+              (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NULL) = 0
+          AND (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL AND PREV_HASH IS NULL) = 1
+          AND (SELECT COUNT(*) FROM (SELECT PREV_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE PREV_HASH IS NOT NULL GROUP BY PREV_HASH HAVING COUNT(*) > 1)) = 0
+          AND (SELECT COUNT(*) FROM (SELECT ROW_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL GROUP BY ROW_HASH HAVING COUNT(*) > 1)) = 0
+         ), 'PASS', 'FAIL');
 
 -- =============================================================================
 -- RBAC (3-tier)
