@@ -174,13 +174,13 @@ def run(session):
         "CONTENT:instructions::VARCHAR AS INSTRUCTIONS, METADATA:priority::VARCHAR AS PRIORITY, "
         "METADATA:swarm::BOOLEAN AS SWARM, TO_JSON(METADATA:related_prior_art) AS PRIOR_ART "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = ''INITIATIVE'' AND STAGE = ''Initiate'' "
+        "AND SUPERSEDED_BY IS NULL "
         "ORDER BY METADATA:priority NULLS LAST, CREATED_AT LIMIT 1"
     ).collect()
     if not rows:
         return "No queued initiatives."
     init = rows[0]
     init_id = init["ID"]
-    session.sql("ALTER SESSION SET QUERY_TAG = ''guppi:ROCKY_EXECUTE:" + init_id + "''").collect()
     title = init["TITLE"]
     hypothesis = init["HYPOTHESIS"] or "N/A"
     instructions = init["INSTRUCTIONS"] or ""
@@ -703,7 +703,6 @@ def _ai(session, model, prompt):
     return str(r[0]["R"]) if r and r[0]["R"] is not None else None
 
 def run(session, p_research_id, p_target, p_angle):
-    session.sql("ALTER SESSION SET QUERY_TAG = 'guppi:BOB_EXECUTE:" + str(p_research_id) + "'").collect()
     rows = session.sql(
         "SELECT TITLE, PARENT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN, CONTENT:conflicts::string AS CONFLICTS "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[p_research_id]).collect()
@@ -854,6 +853,7 @@ def run(session, p_research_id, p_target, p_angle):
         "localization": {"judge": loc_judge, "n_claims": len(claims), "unsupported": unsupported, "contradicted": contradicted}}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- Bob is EXECUTE AS OWNER; contributors invoke the build step via the governed proc (RULE-028)
 
 -- =============================================================================
 -- MERGE_ARTIFACTS — reconcile a duplicate artifact into a survivor.
@@ -925,3 +925,159 @@ BEGIN
 END;
 
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.MERGE_ARTIFACTS(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- ENSURE_NARRATIVE_HTML — create-if-missing launchable HTML for a NARRATIVE.
+-- Open-button robustness: if the narrative has no staged HTML (or a dangling
+-- stage_path), render a clean styled doc from CONTENT, put_stream it to
+-- @ARTIFACT_ASSETS/narrative/auto/<ID>.html, and set metadata.launch. Idempotent:
+-- if the referenced file already exists on the stage, it is reused untouched.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(P_ARTIFACT_ID VARCHAR)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json, io, re
+
+def _esc(s):
+    return (str(s) if s is not None else "").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;")
+
+def _inline(t):
+    # t is already HTML-escaped
+    t = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'<a href="\2" target="_blank">\1</a>', t)
+    t = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', t)
+    t = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', t)
+    t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
+    return t
+
+def _md(md):
+    lines = (md or "").split("\n")
+    out = []
+    mode = None
+    para = []
+    def flush_para():
+        if para:
+            out.append("<p>" + _inline(" ".join(para)) + "</p>")
+            para.clear()
+    def close_list():
+        nonlocal mode
+        if mode == 'ul': out.append("</ul>")
+        elif mode == 'ol': out.append("</ol>")
+        mode = None
+    for raw in lines:
+        line = raw.rstrip()
+        if line.strip().startswith("```"):
+            flush_para(); close_list()
+            if mode == 'pre':
+                out.append("</code></pre>"); mode = None
+            else:
+                out.append("<pre><code>"); mode = 'pre'
+            continue
+        if mode == 'pre':
+            out.append(_esc(raw)); continue
+        s = line.strip()
+        if not s:
+            flush_para(); close_list(); continue
+        m = re.match(r'^(#{1,6})\s+(.*)$', s)
+        if m:
+            flush_para(); close_list()
+            lvl = min(len(m.group(1)), 4)
+            out.append("<h%d>%s</h%d>" % (lvl, _inline(_esc(m.group(2))), lvl)); continue
+        if re.match(r'^(---+|\*\*\*+)$', s):
+            flush_para(); close_list(); out.append("<hr>"); continue
+        mb = re.match(r'^[-*]\s+(.*)$', s)
+        if mb:
+            flush_para()
+            if mode != 'ul': close_list(); out.append("<ul>"); mode = 'ul'
+            out.append("<li>" + _inline(_esc(mb.group(1))) + "</li>"); continue
+        mo = re.match(r'^\d+\.\s+(.*)$', s)
+        if mo:
+            flush_para()
+            if mode != 'ol': close_list(); out.append("<ol>"); mode = 'ol'
+            out.append("<li>" + _inline(_esc(mo.group(1))) + "</li>"); continue
+        if mode in ('ul','ol'): close_list()
+        para.append(_esc(s))
+    flush_para(); close_list()
+    if mode == 'pre': out.append("</code></pre>")
+    return "\n".join(out)
+
+def _obj(v):
+    if v is None: return {}
+    if isinstance(v,(dict,list)): return v
+    try: return json.loads(v)
+    except Exception: return {}
+
+def run(session, p_artifact_id):
+    rows = session.sql("SELECT TYPE, TITLE, STAGE, OWNER, PARENT_ID, CONTENT, METADATA "
+                       "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ? AND SUPERSEDED_BY IS NULL",
+                       params=[p_artifact_id]).collect()
+    if not rows: return {"error":"artifact not found","id":p_artifact_id}
+    r = rows[0]
+    if r["TYPE"] != "NARRATIVE": return {"error":"not a narrative","id":p_artifact_id,"type":r["TYPE"]}
+    content = _obj(r["CONTENT"]); meta = _obj(r["METADATA"]) or {}
+    launch = meta.get("launch") or {}
+    existing = launch.get("stage_path") or ""
+
+    def _exists(sp):
+        if not sp or not sp.startswith("@"): return False
+        try:
+            return len(session.sql("LIST " + sp).collect()) > 0
+        except Exception:
+            return False
+
+    if _exists(existing):
+        return {"artifact_id":p_artifact_id,"stage_path":existing,"created":False,"note":"existing html reused"}
+
+    md = content.get("narrative") or content.get("synthesis") or content.get("description") or content.get("summary") or ""
+    if not md:
+        md = "```\n" + json.dumps(content, indent=2) + "\n```"
+    body = _md(md)
+    title = r["TITLE"] or p_artifact_id
+    bits = [_esc(r["STAGE"])]
+    if r["OWNER"]: bits.append("owner " + _esc(r["OWNER"]))
+    if r["PARENT_ID"]: bits.append("parent " + _esc(r["PARENT_ID"]))
+    meta_line = " &middot; ".join([b for b in bits if b])
+    html = ("<!DOCTYPE html><html><head><meta charset=utf-8>"
+        "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
+        "<title>" + _esc(title) + "</title><style>"
+        "*{box-sizing:border-box;margin:0;padding:0}"
+        "body{font-family:'Segoe UI',Helvetica,Arial,sans-serif;background:#0a0a12;color:#e2e8f0;line-height:1.6}"
+        ".wrap{max-width:860px;margin:0 auto;padding:0 0 80px}"
+        ".cover{background:linear-gradient(135deg,#0B1F33,#12131e 70%);border-bottom:3px solid #29B5E8;padding:30px 44px}"
+        ".cover .id{color:#29B5E8;font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}"
+        ".cover h1{font-size:1.7rem;margin:6px 0 8px;color:#fff;line-height:1.25}"
+        ".cover .meta{color:#8888a0;font-size:.75rem}"
+        ".body{padding:30px 44px}"
+        ".body h1{font-size:1.5rem;color:#fff;margin:26px 0 10px;border-bottom:1px solid #1e2030;padding-bottom:6px}"
+        ".body h2{font-size:1.2rem;color:#29B5E8;margin:22px 0 8px}"
+        ".body h3{font-size:1.02rem;color:#14B8A6;margin:18px 0 6px}"
+        ".body h4{font-size:.92rem;color:#cbd5e1;margin:14px 0 4px}"
+        ".body p{margin:10px 0;color:#cbd5e1}"
+        ".body ul,.body ol{margin:10px 0 10px 26px;color:#cbd5e1}.body li{margin:4px 0}"
+        ".body a{color:#29B5E8;text-decoration:none}.body a:hover{text-decoration:underline}"
+        ".body strong{color:#fff}"
+        ".body code{background:#171826;border:1px solid #1e2030;border-radius:4px;padding:1px 5px;font-size:.88em}"
+        ".body pre{background:#12131e;border:1px solid #1e2030;border-radius:8px;padding:14px;overflow:auto;margin:12px 0}"
+        ".body pre code{background:none;border:none;padding:0;white-space:pre}"
+        ".body hr{border:none;border-top:1px solid #1e2030;margin:20px 0}"
+        ".foot{text-align:center;color:#5a5a72;font-size:.72rem;margin-top:30px;padding:0 44px}"
+        "</style></head><body><div class=wrap>"
+        "<div class=cover><div class=id>" + _esc(p_artifact_id) + " &middot; NARRATIVE</div>"
+        "<h1>" + _esc(title) + "</h1><div class=meta>" + meta_line + "</div></div>"
+        "<div class=body>" + body + "</div>"
+        "<div class=foot>Generated by GuppiWheel &middot; bytes in @GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS &middot; source of truth is the wheel</div>"
+        "</div></body></html>")
+    target = "@GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS/narrative/auto/" + p_artifact_id + ".html"
+    session.file.put_stream(io.BytesIO(html.encode("utf-8")), target, auto_compress=False, overwrite=True)
+    meta["launch"] = {"app_type":"static_html","stage_path":target,"default_ttl_seconds":3600}
+    session.sql("UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET METADATA = PARSE_JSON(?), UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?",
+                params=[json.dumps(meta), p_artifact_id]).collect()
+    return {"artifact_id":p_artifact_id,"stage_path":target,"created":True}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;

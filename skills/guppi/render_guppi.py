@@ -396,11 +396,12 @@ def open_local(artifact_id):
     conn = _connect()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT METADATA FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = %s", (artifact_id,))
+        cur.execute("SELECT TYPE, METADATA FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = %s", (artifact_id,))
         row = cur.fetchone()
         if row is None:
             return {"error": "artifact not found", "id": artifact_id}
-        meta = row[0]
+        art_type = row[0]
+        meta = row[1]
         if isinstance(meta, str):
             try:
                 meta = json.loads(meta)
@@ -408,6 +409,21 @@ def open_local(artifact_id):
                 meta = {}
         launch = (meta or {}).get("launch") or {}
         stage_path = launch.get("stage_path")
+        # Narratives: create-if-missing (and self-heal dangling pointers) via the governed
+        # proc, which renders + stages an HTML and returns the stage_path. Makes Open robust
+        # for every narrative instead of erroring when metadata.launch is absent/blank.
+        if art_type == "NARRATIVE":
+            try:
+                cur.execute("CALL GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(%s)", (artifact_id,))
+                res = cur.fetchone()[0]
+                if isinstance(res, str):
+                    res = json.loads(res)
+                if isinstance(res, dict) and res.get("stage_path"):
+                    stage_path = res["stage_path"]
+                elif isinstance(res, dict) and res.get("error"):
+                    return {"error": "could not prepare narrative html: " + str(res.get("error")), "id": artifact_id}
+            except Exception as e:
+                return {"error": "ENSURE_NARRATIVE_HTML failed: " + str(e), "id": artifact_id}
         if stage_path:
             local_dir = os.path.expanduser("~/Downloads")
             os.makedirs(local_dir, exist_ok=True)
