@@ -597,11 +597,19 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCH
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 
 -- =============================================================================
--- VERIFY_CHAIN — INIT-75 Thread A deep tamper audit. Walks the birth-hash chain by LINKAGE
--- (prev_hash -> row_hash), NOT by any sequence/timestamp column (Snowflake AUTOINCREMENT and
--- CREATED_AT are not reliable chain order). Recomputes each ROW_HASH from the stored birth bundle
--- with the SAME _canon as CREATE_ARTIFACT and reports the first break. Detects content tamper,
--- reorder/relink (fork), deletion, out-of-band insertion, and identity-field tamper. Read-only.
+-- VERIFY_CHAIN — INIT-75 Thread A tamper audit (v3: structural gate + informational content).
+-- Walks the birth-hash chain by LINKAGE (prev_hash -> row_hash), NOT by any sequence/timestamp
+-- column (Snowflake AUTOINCREMENT and CREATED_AT are not reliable chain order).
+--
+-- ATTESTATION MODEL (decided 2026-07-11): the wheel has GOVERNED in-place edits (MERGE_ARTIFACTS
+-- re-parents children + breadcrumbs metadata; UPDATE_OWN_ARTIFACT edits title/content) that
+-- legitimately change hashed bundle fields. So:
+--   * STRUCTURAL = the hard pass/fail tamper-evidence gate: genesis==1, no fork, no cycle, all
+--     rows reachable by hash-linkage (detects delete / reorder / insert). Flips ok:false.
+--   * CONTENT = informational: for LIVE rows (SUPERSEDED_BY IS NULL) recompute the bundle hash;
+--     rows that differ from birth are listed in `modified_since_birth` for review (governed
+--     edits AND any real tamper surface here) — NEVER auto-fails. Superseded rows are retired
+--     and skipped (they may carry governed MERGE annotations). Read-only.
 -- =============================================================================
 CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.VERIFY_CHAIN()
 RETURNS VARIANT
@@ -635,12 +643,11 @@ def _canon(o):
 def run(session):
     rows = session.sql(
         "SELECT ID, TYPE, TITLE, OWNER, PARENT_ID, TO_JSON(CONTENT) AS C, TO_JSON(METADATA) AS M, "
-        "PREV_HASH, ROW_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL"
+        "PREV_HASH, ROW_HASH, SUPERSEDED_BY FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL"
     ).collect()
     total = len(rows)
     if total == 0:
         return {"ok": True, "total": 0, "note": "chain not initialized"}
-
     unhashed = session.sql("SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NULL").collect()[0]["C"]
 
     by_prev = {}
@@ -650,34 +657,39 @@ def run(session):
 
     genesis = by_prev.get(None, [])
     if len(genesis) != 1:
-        return {"ok": False, "reason": "genesis_count!=1", "genesis_found": len(genesis), "total": total, "unhashed_rows": unhashed}
+        return {"ok": False, "reason": "STRUCTURAL: genesis_count!=1", "genesis_found": len(genesis), "total": total, "unhashed_rows": unhashed}
 
     expected_prev = None
     count = 0
+    modified = []
     while True:
         matches = by_prev.get(expected_prev, [])
         if len(matches) == 0:
             break
         if len(matches) > 1:
-            return {"ok": False, "reason": "fork", "at_prev_hash": expected_prev,
+            return {"ok": False, "reason": "STRUCTURAL: fork", "at_prev_hash": expected_prev,
                     "fork_ids": [m["ID"] for m in matches], "checked": count}
         r = matches[0]
-        bundle = {"id": r["ID"], "type": r["TYPE"], "title": r["TITLE"], "owner": r["OWNER"],
-                  "parent_id": r["PARENT_ID"], "content": _asobj(r["C"], {}), "metadata": _asobj(r["M"], {})}
-        expected_row = session.sql("SELECT SHA2_HEX(?) AS H",
-                                   params=[_canon({"rec": bundle, "prev": expected_prev})]).collect()[0]["H"]
-        if expected_row != r["ROW_HASH"]:
-            return {"ok": False, "reason": "row_hash_mismatch", "first_break_id": r["ID"],
-                    "expected": expected_row, "stored": r["ROW_HASH"], "checked": count}
+        # Informational content check on LIVE rows only (superseded rows are retired).
+        if r["SUPERSEDED_BY"] is None:
+            bundle = {"id": r["ID"], "type": r["TYPE"], "title": r["TITLE"], "owner": r["OWNER"],
+                      "parent_id": r["PARENT_ID"], "content": _asobj(r["C"], {}), "metadata": _asobj(r["M"], {})}
+            expected_row = session.sql("SELECT SHA2_HEX(?) AS H",
+                                       params=[_canon({"rec": bundle, "prev": expected_prev})]).collect()[0]["H"]
+            if expected_row != r["ROW_HASH"]:
+                modified.append(r["ID"])
         count += 1
         expected_prev = r["ROW_HASH"]
         if count > total:
-            return {"ok": False, "reason": "cycle_detected", "checked": count}
+            return {"ok": False, "reason": "STRUCTURAL: cycle_detected", "checked": count}
 
     if count != total:
-        return {"ok": False, "reason": "unreachable_rows(orphan/deletion/reorder)",
+        return {"ok": False, "reason": "STRUCTURAL: unreachable_rows(orphan/deletion/reorder)",
                 "reachable": count, "total": total}
-    return {"ok": True, "total": total, "head": expected_prev, "unhashed_rows": unhashed}
+    return {"ok": True, "structural": "intact", "total": total, "head": expected_prev,
+            "unhashed_rows": unhashed,
+            "modified_since_birth": modified,
+            "modified_note": "live rows whose hashed fields changed after birth (governed edits like MERGE re-parent / UPDATE_OWN_ARTIFACT, or tamper) -- review, not a failure"}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.VERIFY_CHAIN() TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.VERIFY_CHAIN() TO ROLE GUPPIWHEEL_VIEWER;
