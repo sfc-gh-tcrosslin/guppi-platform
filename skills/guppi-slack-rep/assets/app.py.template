@@ -1,0 +1,120 @@
+"""Guppi Slack representative — real-time inbound listener (Socket Mode).
+
+RECIPE TEMPLATE. Rename to app.py for the Docker build. The only owner-specific
+string is the footer ({{OWNER_HANDLE}}); the agent name/DB/schema come from env.
+
+Runs in SPCS. Listens for @mentions and DMs, relays the question to the deployed
+read-only rep agent, and posts the grounded, attributed answer back to Slack.
+
+Auth model:
+- Slack: bot token (xoxb) + app-level token (xapp) — mounted from Snowflake SECRETs
+  as env vars SLACK_BOT_TOKEN / SLACK_APP_TOKEN by the SPCS service spec.
+- Snowflake: the SPCS service identity. We read the OAuth token from
+  /snowflake/session/token and call the Cortex Agent :run REST endpoint on the
+  internal account host (SNOWFLAKE_HOST). No PAT, no stored Snowflake credential.
+
+The agent is read-only; this bridge only relays. It cannot mutate the wheel.
+"""
+import json
+import os
+import re
+
+import requests
+from slack_bolt import App
+from slack_bolt.adapter.socket_mode import SocketModeHandler
+
+AGENT_DB = os.environ.get("AGENT_DB", "{{DB}}")
+AGENT_SCHEMA = os.environ.get("AGENT_SCHEMA", "{{SCHEMA}}")
+AGENT_NAME = os.environ.get("AGENT_NAME", "{{AGENT_NAME}}")
+
+TOKEN_FILE = "/snowflake/session/token"
+SNOWFLAKE_HOST = os.environ.get("SNOWFLAKE_HOST", "")
+
+FOOTER = (
+    "_Answered by Guppi (read-only, grounded) on {{OWNER_HANDLE}}'s behalf. "
+    "Not {{OWNER_HANDLE}} speaking directly. For anything it routes to {{OWNER_HANDLE}}, ping them._"
+)
+
+app = App(token=os.environ["SLACK_BOT_TOKEN"], request_verification_enabled=False)
+
+
+def _snow_token():
+    with open(TOKEN_FILE) as f:
+        return f.read().strip()
+
+
+def _to_mrkdwn(text):
+    return text.replace("**", "*")
+
+
+def ask_agent(question):
+    """Call the rep agent :run with the SPCS service identity; return final text."""
+    token = _snow_token()
+    url = f"https://{SNOWFLAKE_HOST}/api/v2/databases/{AGENT_DB}/schemas/{AGENT_SCHEMA}/agents/{AGENT_NAME}:run"
+    # NOTE: Bearer + OAUTH token-type is REQUIRED. The 'Snowflake Token=' scheme returns 400/401.
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Snowflake-Authorization-Token-Type": "OAUTH",
+        "Content-Type": "application/json",
+    }
+    payload = {"messages": [{"role": "user", "content": [{"type": "text", "text": question}]}]}
+    resp = requests.post(url, headers=headers, json=payload, stream=True, timeout=180)
+    if resp.status_code != 200:
+        raise RuntimeError(f"agent {resp.status_code}: {resp.text[:400]}")
+
+    final = None
+    event_type = None
+    for line in resp.iter_lines():
+        if not line:
+            continue
+        decoded = line.decode("utf-8")
+        if decoded.startswith("event: "):
+            event_type = decoded[7:].strip()
+        elif decoded.startswith("data: "):
+            try:
+                data = json.loads(decoded[6:])
+                if event_type == "response":
+                    final = data
+            except Exception:
+                pass
+    if not final or "content" not in final:
+        return None
+    texts = [b["text"] for b in final["content"] if b.get("type") == "text" and b.get("text")]
+    return "\n".join(t.strip() for t in texts).strip()
+
+
+def _clean_mention(text):
+    """Strip the leading <@BOTID> mention from the message text."""
+    return re.sub(r"<@[^>]+>\s*", "", text or "").strip()
+
+
+def _handle(question, say, thread_ts):
+    q = _clean_mention(question)
+    if not q:
+        say(text="Ask me something about {{OWNER_HANDLE}}'s work and I'll ground an answer or route it to them.", thread_ts=thread_ts)
+        return
+    try:
+        answer = ask_agent(q)
+    except Exception as e:
+        say(text=f"(Guppi hit an error reaching the agent: {e}. Routing to {{OWNER_HANDLE}}.)", thread_ts=thread_ts)
+        return
+    if not answer:
+        say(text="Guppi couldn't get a grounded answer just now — routing to {{OWNER_HANDLE}}.", thread_ts=thread_ts)
+        return
+    say(text=f"{_to_mrkdwn(answer)}\n\n{FOOTER}", thread_ts=thread_ts)
+
+
+@app.event("app_mention")
+def on_mention(event, say):
+    _handle(event.get("text", ""), say, event.get("thread_ts") or event.get("ts"))
+
+
+@app.event("message")
+def on_dm(event, say):
+    # Only respond to direct-message channels, and ignore the bot's own messages.
+    if event.get("channel_type") == "im" and not event.get("bot_id"):
+        _handle(event.get("text", ""), say, event.get("thread_ts") or event.get("ts"))
+
+
+if __name__ == "__main__":
+    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()

@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app.py .
+
+# Socket Mode holds an outbound WebSocket to Slack; no inbound port needed.
+CMD ["python", "-u", "app.py"]

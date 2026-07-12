@@ -1,0 +1,55 @@
+-- =============================================================================
+-- Guppi Slack Rep — create the service + business-hours schedule.
+-- Run AFTER groundwork, agent, secrets, and image push are all in place.
+-- Substitute {{TOKENS}}.
+-- =============================================================================
+
+-- 1) Create the service as the least-priv bridge role (runs with its privileges).
+USE ROLE {{ROLE}};
+CREATE SERVICE IF NOT EXISTS {{DB}}.{{SCHEMA}}.{{SERVICE}}
+  IN COMPUTE POOL {{POOL}}
+  FROM SPECIFICATION $$
+spec:
+  containers:
+    - name: bridge
+      image: /{{DB}}/{{SCHEMA}}/{{IMAGE_REPO}}/guppi-slack-bridge:{{IMAGE_TAG}}
+      env:
+        AGENT_DB: {{DB}}
+        AGENT_SCHEMA: {{SCHEMA}}
+        AGENT_NAME: {{AGENT_NAME}}
+      resources:
+        limits:
+          memory: 6Gi
+          cpu: "1"
+        requests:
+          memory: 0.5Gi
+          cpu: "0.5"
+      secrets:
+        - snowflakeSecret: {{DB}}.{{SCHEMA}}.SLACK_BOT_TOKEN
+          secretKeyRef: secret_string
+          envVarName: SLACK_BOT_TOKEN
+        - snowflakeSecret: {{DB}}.{{SCHEMA}}.SLACK_APP_TOKEN
+          secretKeyRef: secret_string
+          envVarName: SLACK_APP_TOKEN
+$$
+  EXTERNAL_ACCESS_INTEGRATIONS = ({{EAI}})
+  MIN_INSTANCES = 1
+  MAX_INSTANCES = 1
+  COMMENT = 'Guppi Slack rep: Socket Mode listener -> {{AGENT_NAME}} -> reply';
+
+-- 2) Business-hours scheduling. Owned by an admin role that holds OPERATE on the service.
+USE ROLE ACCOUNTADMIN;
+CREATE OR REPLACE TASK {{DB}}.{{SCHEMA}}.{{PREFIX}}_SLACK_RESUME
+  SCHEDULE = 'USING CRON {{RESUME_CRON}} {{TIMEZONE}}'
+  AS ALTER SERVICE {{DB}}.{{SCHEMA}}.{{SERVICE}} RESUME;
+CREATE OR REPLACE TASK {{DB}}.{{SCHEMA}}.{{PREFIX}}_SLACK_SUSPEND
+  SCHEDULE = 'USING CRON {{SUSPEND_CRON}} {{TIMEZONE}}'
+  AS ALTER SERVICE {{DB}}.{{SCHEMA}}.{{SERVICE}} SUSPEND;
+ALTER TASK {{DB}}.{{SCHEMA}}.{{PREFIX}}_SLACK_RESUME RESUME;
+ALTER TASK {{DB}}.{{SCHEMA}}.{{PREFIX}}_SLACK_SUSPEND RESUME;
+
+-- 3) Verify:
+--    SHOW SERVICES LIKE '{{SERVICE}}' IN SCHEMA {{DB}}.{{SCHEMA}};
+--    SELECT SYSTEM$GET_SERVICE_STATUS('{{DB}}.{{SCHEMA}}.{{SERVICE}}');
+--    SELECT SYSTEM$GET_SERVICE_LOGS('{{DB}}.{{SCHEMA}}.{{SERVICE}}', 0, 'bridge', 50);
+--    Then @mention the bot in Slack.

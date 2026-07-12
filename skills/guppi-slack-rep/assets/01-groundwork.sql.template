@@ -1,0 +1,58 @@
+-- =============================================================================
+-- Guppi Slack Rep — groundwork DDL (run once as an admin role, e.g. ACCOUNTADMIN).
+-- Creates egress plumbing + a least-privilege bridge role + a business-hours XS pool
+-- + an image repo. Reconstructed from the reference deployment (2026-07-11).
+-- Substitute {{TOKENS}} for your environment. SECURITYADMIN is needed for the two
+-- account-level grants noted below.
+-- =============================================================================
+
+-- 1) Slack egress: a network rule + external access integration, scoped to Slack hosts only.
+CREATE OR REPLACE NETWORK RULE {{DB}}.{{SCHEMA}}.{{NETWORK_RULE}}
+  MODE = EGRESS
+  TYPE = HOST_PORT
+  VALUE_LIST = ('slack.com:443', 'api.slack.com:443', 'wss-primary.slack.com:443', 'wss-backup.slack.com:443');
+
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION {{EAI}}
+  ALLOWED_NETWORK_RULES = ({{DB}}.{{SCHEMA}}.{{NETWORK_RULE}})
+  ENABLED = TRUE;
+
+-- 2) Business-hours XS pool. INITIALLY_SUSPENDED so it costs nothing until resumed.
+CREATE COMPUTE POOL IF NOT EXISTS {{POOL}}
+  MIN_NODES = 1
+  MAX_NODES = 1
+  INSTANCE_FAMILY = CPU_X64_XS
+  AUTO_RESUME = TRUE
+  AUTO_SUSPEND_SECS = 600
+  INITIALLY_SUSPENDED = TRUE;
+
+-- 3) Image repository for the bridge container.
+CREATE IMAGE REPOSITORY IF NOT EXISTS {{DB}}.{{SCHEMA}}.{{IMAGE_REPO}};
+
+-- 4) Least-privilege bridge role. Gets ONLY what the listener needs.
+CREATE ROLE IF NOT EXISTS {{ROLE}};
+
+-- grounding + agent + warehouse
+GRANT USAGE   ON DATABASE {{DB}}                                   TO ROLE {{ROLE}};
+GRANT USAGE   ON SCHEMA   {{DB}}.{{SCHEMA}}                        TO ROLE {{ROLE}};
+GRANT SELECT  ON SEMANTIC VIEW {{SEMANTIC_VIEW}}                   TO ROLE {{ROLE}};
+GRANT USAGE   ON CORTEX SEARCH SERVICE {{ARTIFACTS_SEARCH}}        TO ROLE {{ROLE}};
+GRANT USAGE   ON WAREHOUSE {{WAREHOUSE}}                           TO ROLE {{ROLE}};
+GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER                         TO ROLE {{ROLE}};
+-- The agent itself (grant AFTER creating it from rep-agent-spec.json.template):
+-- GRANT USAGE ON AGENT {{DB}}.{{SCHEMA}}.{{AGENT_NAME}}           TO ROLE {{ROLE}};
+
+-- optional Bond grounding (skip these two if you are not grounding on The Bond)
+GRANT USAGE   ON DATABASE {{BOND_DB}}                             TO ROLE {{ROLE}};
+GRANT USAGE   ON SCHEMA   {{BOND_DB}}.{{BOND_SCHEMA}}             TO ROLE {{ROLE}};
+GRANT USAGE   ON CORTEX SEARCH SERVICE {{BOND_SEARCH}}           TO ROLE {{ROLE}};
+
+-- SPCS: run the service, use the pool + EAI, read the image, bind the endpoint
+GRANT USAGE  ON COMPUTE POOL {{POOL}}                            TO ROLE {{ROLE}};
+GRANT USAGE  ON INTEGRATION {{EAI}}                              TO ROLE {{ROLE}};
+GRANT CREATE SERVICE ON SCHEMA {{DB}}.{{SCHEMA}}                 TO ROLE {{ROLE}};
+GRANT READ   ON IMAGE REPOSITORY {{DB}}.{{SCHEMA}}.{{IMAGE_REPO}} TO ROLE {{ROLE}};
+-- account-level, needs SECURITYADMIN:
+GRANT BIND SERVICE ENDPOINT ON ACCOUNT                          TO ROLE {{ROLE}};
+
+-- give the role to whoever operates the bridge (and to the deployer)
+GRANT ROLE {{ROLE}} TO ROLE ACCOUNTADMIN;

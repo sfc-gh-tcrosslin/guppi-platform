@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.14.0] — 2026-07-12
+
+### Feature — Guppi Slack Representative recipe (a *suggestion*, not substrate) + birth-hash attestation model (INIT-77, INIT-75)
+
+Two bodies of work. First, the bi-directional Slack representative — built and proven live on the reference account — is packaged as an **adoptable recipe skill**, deliberately in the capability tier rather than the engine seed. Second, `VERIFY_CHAIN` (INIT-75 Thread A) is upgraded to the attestation model we settled on when governed edits collided with the birth-hash.
+
+- **New skill `guppi-slack-rep` (INIT-77).** A read-only, grounded Cortex Agent that answers Slack @mentions in real time on the owner's behalf, via an SPCS Socket Mode listener. Packaged as a *suggestion* — "one Guppi to another, you could do this" — because most installs won't want it (not every team is on Slack; it needs tokens + SPCS budget). Fully parameterized with `{{TOKENS}}`: `SKILL.md` (when-to-suggest, guardrails, deploy runbook, the SPCS→Agent `Bearer`+`OAUTH` auth gotcha) + `assets/` (Socket Mode `app.py`, Dockerfile, requirements, parameterized rep-agent spec, and groundwork/secrets/service SQL reconstructed from the live deployment). **Explicitly NOT seeded** — no rep agent in `05_agents.sql`.
+- **Reusability contract baked in.** The agent OBJECT name is generic (`GUPPI_REP_AGENT`); the owner attribution ("on behalf of <owner>") lives only in the persona config. This recipe exists partly to codify *don't name a shared object after a person*.
+- **`VERIFY_CHAIN` v3 (`seeds/engine/03_procs.sql`, INIT-75).** Structural checks (genesis / linkage / fork / reachability — delete/reorder/insert detection) remain the hard pass/fail tamper-evidence gate. Content differences on LIVE rows are now **informational** (`modified_since_birth`), not an auto-fail, because governed in-place edits (`MERGE_ARTIFACTS` re-parent + breadcrumb, `UPDATE_OWN_ARTIFACT`) legitimately change hashed bundle fields; superseded rows skip the content recompute. Syncs the seed to the deployed proc.
+
 ## [3.13.0] — 2026-07-03
 
 ### Feature — Prior-art search on new initiatives + Guppi viewer rewrite (SDLC + AILC)

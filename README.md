@@ -1,4 +1,4 @@
-# guppi-platform v3.13.0
+# guppi-platform v3.14.0
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -194,6 +194,7 @@ ALTER SHARE <PRODUCT>_SHARE ADD ACCOUNTS=<account_locator>;
 - See `CHANGELOG.md` for version history and breaking changes
 - See `skills/guppiwheel/SKILL.md` for the full GuppiWheel concept
 - See `skills/guppi/SKILL.md` for the viewer architecture
+- See `skills/guppi-slack-rep/SKILL.md` for the optional Slack representative recipe (a *suggestion* one Guppi makes to another — capability tier, not seed substrate)
 - See `agents/rocky.md`, `agents/tars.md`, `agents/steward.md`, and `agents/bob.md` for agent behavior contracts
 - See `references/maturity-model.md` and `references/trust-equation.md` for theoretical foundations
 
