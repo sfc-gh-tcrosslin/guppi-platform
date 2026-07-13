@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.14.1 — Engine Seed 01: Schema
+-- guppi-platform v3.15.0 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -339,13 +339,62 @@ UNION ALL
 SELECT 'dup_row_hash', COUNT(*), LISTAGG(ROW_HASH, ', ')
 FROM (SELECT ROW_HASH FROM hashed GROUP BY ROW_HASH HAVING COUNT(*) > 1);
 
+-- =============================================================================
+-- TYPE_REGISTRY — the canonical artifact-type taxonomy as governance-as-data
+-- (like RULES). ONE source of truth: GROUNDING_HEALTH_V derives its canonical
+-- type + stage lists from here, CREATE_ARTIFACT enforces TYPE against it, and the
+-- semantic view exposes it so agents can authoritatively define any type. Adding
+-- a type = one governed INSERT here (then it is usable everywhere). Introduced to
+-- resolve type-list drift (OUTCOME was missing from the semantic model). STAGES is
+-- a CSV; the union of all STAGES defines the canonical stage set.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.TYPE_REGISTRY (
+    TYPE           VARCHAR(40)   NOT NULL PRIMARY KEY,
+    PURPOSE        VARCHAR(1000) NOT NULL,
+    ID_PREFIX      VARCHAR(120),
+    LIFECYCLE      VARCHAR(20)   NOT NULL,   -- standard | workitem | outcome
+    STAGES         VARCHAR(300)  NOT NULL,   -- CSV of valid stages for this type
+    IS_LAUNCHABLE  BOOLEAN       NOT NULL DEFAULT FALSE,
+    INTRODUCED_IN  VARCHAR(40),
+    NOTES          VARCHAR(500),
+    UPDATED_AT     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+MERGE INTO GUPPIWHEEL.PUBLIC.TYPE_REGISTRY t
+USING (
+  SELECT column1 AS TYPE, column2 AS PURPOSE, column3 AS ID_PREFIX, column4 AS LIFECYCLE,
+         column5 AS STAGES, column6 AS IS_LAUNCHABLE, column7 AS INTRODUCED_IN, column8 AS NOTES
+  FROM VALUES
+    ('INITIATIVE','A unit of intended value: a hypothesis to pursue. Root of a work tree; Rocky researches it and epics/stories hang under it.','INIT-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
+    ('EPIC','A large body of work grouping related stories under an initiative.','E-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
+    ('RESEARCH','Synthesis/findings (often produced by Rocky) that ground an initiative before building.','RES-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
+    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.','product-scoped: ENTITY=STORY_<PRODUCT> (PLAT-, ADONIS-, F6-, S-, ...)','workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Narrated',FALSE,'',''),
+    ('NARRATIVE','A published, launchable write-up (plan, story, briefing) rendered to HTML in the wheel.','NAR-','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
+    ('APP','A launchable application registered in the wheel (identifier/url/stage_path in metadata.launch).','APP-','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
+    ('MODEL','A launchable ML model registered in the wheel.','APP- (minted in the APP series)','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
+    ('DASHBOARD','A launchable dashboard/visualization registered in the wheel.','DASH-','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
+    ('DEFECT','A tracked defect/bug against product work. Product-scoped IDs.','product-scoped: ENTITY=DEFECT_<PRODUCT> (PLAT-D, F6-D, SC-D)','workitem','Research,Building,Built,Narrated,Resolved',FALSE,'',''),
+    ('INCIDENT','An operational incident record.','INC-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
+    ('AUDIT','A read-only grounding/hygiene scan record (e.g., Stewart). System-generated; UUID IDs.','(UUID)','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
+    ('OPS_EVENT','An operational event / status marker (e.g., a product status snapshot).','OPS-<slug>','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
+    ('OUTCOME','A measurable target tracked against the real world. A pointer (snowflake_path / app_metric / external_url) must resolve to live data or an explicit human sign-off before RESOLVED.','OUT-','outcome','ASPIRATIONAL,SELECTED,TRACKED,RESOLVED',FALSE,'INIT-37','Distinct 4-stage lifecycle (STG-005); the standard Initiate->Narrated stages do NOT apply.'),
+    ('SKILL','A registered capability/recipe skill in the plugin.','<freeform slug>','standard','Initiate,Research,Building,Built,Narrated',FALSE,'','')
+) s
+ON t.TYPE = s.TYPE
+WHEN MATCHED THEN UPDATE SET PURPOSE=s.PURPOSE, ID_PREFIX=s.ID_PREFIX, LIFECYCLE=s.LIFECYCLE,
+  STAGES=s.STAGES, IS_LAUNCHABLE=s.IS_LAUNCHABLE, INTRODUCED_IN=s.INTRODUCED_IN, NOTES=s.NOTES, UPDATED_AT=CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (TYPE,PURPOSE,ID_PREFIX,LIFECYCLE,STAGES,IS_LAUNCHABLE,INTRODUCED_IN,NOTES)
+  VALUES (s.TYPE,s.PURPOSE,s.ID_PREFIX,s.LIFECYCLE,s.STAGES,s.IS_LAUNCHABLE,s.INTRODUCED_IN,s.NOTES);
+
 -- GROUNDING_HEALTH_V — Stewart's senses (RULE-027). Deterministic grounding/hygiene drift signals; healthy = all N=0.
+-- canon_type + canon_stage DERIVE from TYPE_REGISTRY (single source; no hardcoded lists to drift).
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.GROUNDING_HEALTH_V AS
 WITH canon_type AS (
-  SELECT column1 AS t FROM VALUES ('INITIATIVE'),('RESEARCH'),('STORY'),('EPIC'),('APP'),('MODEL'),('DASHBOARD'),('NARRATIVE'),('DEFECT'),('INCIDENT'),('AUDIT'),('OPS_EVENT'),('OUTCOME'),('SKILL')
+  SELECT TYPE AS t FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY
 ),
 canon_stage AS (
-  SELECT column1 AS s FROM VALUES ('Initiate'),('Research'),('Building'),('Built'),('Narrated'),('Resolved'),('ASPIRATIONAL'),('SELECTED'),('TRACKED'),('RESOLVED')
+  SELECT DISTINCT TRIM(s.VALUE) AS s
+  FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY r, LATERAL SPLIT_TO_TABLE(r.STAGES, ',') s
 )
 SELECT 'duplicate_id' AS signal, 'HIGH' AS severity, COUNT(*) AS n, LISTAGG(ID, ', ') WITHIN GROUP (ORDER BY ID) AS detail
 FROM (SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS GROUP BY ID HAVING COUNT(*)>1)

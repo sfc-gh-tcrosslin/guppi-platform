@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.15.0] — 2026-07-13
+
+### Feature — Artifact TYPE_REGISTRY (taxonomy as governance-as-data) (INIT-37)
+
+The artifact-type taxonomy was scattered across five places (GROUNDING_HEALTH_V, the semantic view's TYPE comment + AI hint, CREATE_ARTIFACT's hardcoded set, and ID_CONVENTIONS) and had drifted: the semantic view listed only 11 types, so the Slack rep agent couldn't confirm OUTCOME was a real type and honestly punted. This makes the taxonomy first-class governance-as-data with one source of truth.
+
+- **New `TYPE_REGISTRY` table (`01_schema.sql`)** seeded with all 14 canonical types, each with a definition (PURPOSE), ID_PREFIX (descriptive), LIFECYCLE (standard/workitem/outcome), valid STAGES (CSV), IS_LAUNCHABLE, and INTRODUCED_IN. Governance-as-data like RULES; contributors get no direct DML.
+- **`GROUNDING_HEALTH_V` derives from the registry.** `canon_type` = `SELECT TYPE FROM TYPE_REGISTRY`; `canon_stage` = the union of `STAGES`. No more hardcoded VALUES lists to drift.
+- **`CREATE_ARTIFACT` hard-enforces against the registry.** An unregistered TYPE is rejected with a clean error (register it first); the hardcoded `VALID_TYPES`/`VALID_STAGES` sets are gone. Adding a type = one INSERT into `TYPE_REGISTRY`.
+- **Semantic view joins `TYPE_REGISTRY`** (relationship on TYPE) and exposes PURPOSE/LIFECYCLE/STAGES/IS_LAUNCHABLE as dimensions, so Cortex Analyst / the rep agent can authoritatively answer "what is an OUTCOME" and "which types are launchable." Definitions live only in the registry (never restated in the view), so nothing can drift. TYPE/STAGE comments + AI hint synced to all 14 types + OUTCOME's 4-stage lifecycle.
+- **SDLC preflight Check 13.8** asserts every live TYPE is registered and every registry type name + stage appears in the semantic view text — the exact drift that hid OUTCOME now fails the push.
+
 ## [3.14.1] — 2026-07-12
 
 ### Fix — governed, regression-proof plugin version stamp (resolves 3-way version drift)

@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.14.1 — Engine Seed 03: Procedures
+-- guppi-platform v3.15.0 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -459,10 +459,8 @@ AS
 $$
 import json
 
-VALID_TYPES = {"INITIATIVE","RESEARCH","STORY","EPIC","APP","MODEL","DASHBOARD",
-               "NARRATIVE","DEFECT","INCIDENT","AUDIT","OPS_EVENT","OUTCOME","SKILL"}
-VALID_STAGES = {"Initiate","Research","Building","Built","Narrated","Resolved",
-                "ASPIRATIONAL","SELECTED","TRACKED","RESOLVED"}
+# Canonical TYPE + STAGE come from TYPE_REGISTRY (governance-as-data, single source).
+# No hardcoded lists here -- adding a type = one INSERT into TYPE_REGISTRY.
 
 def _count(session, sql, params):
     return session.sql(sql, params=params).collect()[0]["C"]
@@ -487,13 +485,19 @@ def _canon(o):
 
 def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_tags, p_explicit_id, p_metadata):
     t = (p_type or "").upper().strip()
-    if t not in VALID_TYPES:
-        return {"error": "invalid TYPE", "got": p_type, "allowed": sorted(VALID_TYPES)}
+    # TYPE must exist in the governed registry (RULE-029 single-write-path philosophy).
+    if _count(session, "SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE TYPE = ?", [t]) == 0:
+        allowed = [r["TYPE"] for r in session.sql("SELECT TYPE FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ORDER BY TYPE").collect()]
+        return {"error": "unknown artifact type", "got": p_type,
+                "hint": "register it in TYPE_REGISTRY first (governance-as-data)", "allowed": allowed}
     if not p_title:
         return {"error": "TITLE required"}
     stage = (p_stage if isinstance(p_stage, str) else None) or "Initiate"
-    if stage not in VALID_STAGES:
-        return {"error": "invalid STAGE", "got": stage, "allowed": sorted(VALID_STAGES)}
+    valid_stages = {r["S"] for r in session.sql(
+        "SELECT DISTINCT TRIM(s.VALUE) AS S FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY r, LATERAL SPLIT_TO_TABLE(r.STAGES, ',') s"
+    ).collect()}
+    if stage not in valid_stages:
+        return {"error": "invalid STAGE", "got": stage, "allowed": sorted(valid_stages)}
 
     # --- DEDUP GUARD (idempotency; complements the single-write-path guarantee, RULE-029): reject byte-identical LIVE resubmits ---
     # Keyed on (TYPE, TITLE, PARENT, OWNER, canonical CONTENT+METADATA) among non-superseded rows.
@@ -1252,4 +1256,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.14.1', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.15.0', 'seed apply', FALSE);

@@ -359,7 +359,37 @@ WHERE TYPE IN ('NARRATIVE','APP','MODEL','DASHBOARD')
 
 Zero rows required.
 
-**Pass criteria:** All 13.1-13.7 sub-checks pass. Drift items get a fix command in the report.
+#### 13.8 Type taxonomy sync
+
+`TYPE_REGISTRY` is the single source of truth for the artifact-type taxonomy. `GROUNDING_HEALTH_V`, `CREATE_ARTIFACT`, and the semantic view all derive from / enforce against it. This check catches the drift that hid OUTCOME from the semantic model.
+
+```sql
+-- a) every live TYPE is registered (also surfaced by GROUNDING_HEALTH_V.noncanonical_artifact_type)
+SELECT DISTINCT a.TYPE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+LEFT JOIN GUPPIWHEEL.PUBLIC.TYPE_REGISTRY r ON a.TYPE = r.TYPE
+WHERE r.TYPE IS NULL;   -- expect 0 rows
+
+-- b) registry row count (for the enumeration check below)
+SELECT LISTAGG(TYPE, ', ') WITHIN GROUP (ORDER BY TYPE) AS types,
+       LISTAGG(DISTINCT s.VALUE, ', ') AS stages
+FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY r, LATERAL SPLIT_TO_TABLE(r.STAGES, ',') s;
+```
+
+Then assert the semantic view enumerates the taxonomy (whether it joins `TYPE_REGISTRY` or uses the guarded fallback):
+- Every `TYPE_REGISTRY.TYPE` name appears in `seeds/engine/04_semantic_view.sql` (the `TYPE` dimension `COMMENT` + the `AI_SQL_GENERATION` hint).
+- Every distinct stage (union of `STAGES`) appears in the `STAGE` dimension `COMMENT` + AI hint.
+
+```bash
+# each registry TYPE must be present in the semantic view text
+grep -o "OUTCOME\|OPS_EVENT\|SKILL\|INITIATIVE\|EPIC\|RESEARCH\|STORY\|NARRATIVE\|APP\|MODEL\|DASHBOARD\|DEFECT\|INCIDENT\|AUDIT" seeds/engine/04_semantic_view.sql | sort -u
+```
+
+Definitions are NOT restated in the semantic view (they live only in `TYPE_REGISTRY`), so only the name/stage enumeration can drift and this check covers it.
+
+**Pass criteria:** (a) returns 0 rows; every registry type name + every stage appears in the semantic view text.
+**Fail criteria:** an unregistered live type, OR a registry type/stage missing from the semantic view. Fix: register the type in `TYPE_REGISTRY`, or update the `04_semantic_view.sql` TYPE/STAGE comments + AI hint to enumerate it.
+
+**Pass criteria:** All 13.1-13.8 sub-checks pass. Drift items get a fix command in the report.
 **Fail criteria:** Any sub-check shows drift. Push blocks until either the seed catches up to live, or live is reset from seeds.
 
 Applies to all repos with skills that are also registered in SKILL_REGISTRY.PUBLIC.SKILLS.
