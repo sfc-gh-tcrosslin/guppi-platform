@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.16.0] — 2026-07-13
+
+### Feature — Warn-hard duplicate-initiative gate at submit time (INIT-75 / PLAT-28)
+
+Two near-identical initiatives (INIT-80 + INIT-81) were submitted 90 minutes apart and both got Rocky-researched before anyone noticed. Root cause: `CREATE_ARTIFACT`'s dedup only catches byte-identical resubmits, and the submit-time prior-art search was advisory/non-blocking — it even listed INIT-80 as INIT-81's top prior-art hit and let it through. This closes the gap with a real semantic gate.
+
+- **`SUBMIT_INITIATIVE` now gates on semantic similarity.** Before creating, it computes `AI_SIMILARITY` between the submission and the closest existing live INITIATIVE. At or above **0.80** it returns a HOLD naming the match and does NOT create — the human decides. Threshold calibrated on real data (true dup INIT-80/81 = 0.93; related-but-distinct = 0.52). Fails SAFE: any scoring hiccup falls through to a normal submit.
+- **Overridable.** A new 4-arg overload `SUBMIT_INITIATIVE(TITLE, HYPOTHESIS, INSTRUCTIONS, P_FORCE)` bypasses the gate when `P_FORCE => TRUE` (stamped `metadata.dup_override`). The existing 3-arg signature is now a thin wrapper that calls the 4-arg with `FALSE`, so the viewer and the COWORK agent are gated automatically with no caller changes. (Snowflake procs don't support DEFAULT args, hence the explicit overload.)
+- Verified live: a near-duplicate of INIT-81 was held at 0.911 through the 3-arg path; `P_FORCE` override created and was then superseded.
+
 ## [3.15.0] — 2026-07-13
 
 ### Feature — Artifact TYPE_REGISTRY (taxonomy as governance-as-data) (INIT-37)

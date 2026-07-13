@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.15.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.16.0 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -81,7 +81,7 @@ def run(session, p_artifact_id, p_target_stage, p_override_reason):
 -- SUBMIT_INITIATIVE — single-write to ARTIFACTS
 -- =============================================================================
 CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(
-  "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR
+  "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR, "P_FORCE" BOOLEAN
 )
 RETURNS VARCHAR
 LANGUAGE PYTHON
@@ -93,6 +93,10 @@ AS
 $$
 import json
 
+# Warn-hard threshold for near-duplicate INITIATIVEs (calibrated: true dup INIT-80/81 = 0.93;
+# related-but-distinct <= 0.53). >= this against an existing live INITIATIVE => HOLD unless P_FORCE.
+DUP_SIMILARITY_THRESHOLD = 0.80
+
 def _search(session, svc, qtext, cols, limit):
     # Advisory prior-art lookup. Fails SAFE: never let a search hiccup block a submission.
     try:
@@ -102,10 +106,33 @@ def _search(session, svc, qtext, cols, limit):
     except Exception:
         return []
 
-def run(session, title, hypothesis, instructions):
-    # Prior-art scan (advisory, non-blocking): search the wheel's own memory — RESEARCH/NARRATIVE
-    # artifacts AND Radar finds — so we surface what we already know instead of re-researching.
+def run(session, title, hypothesis, instructions, p_force):
     qtext = (title or "") + ". " + (hypothesis or "")
+
+    # Duplicate GATE (warn-hard, overridable). Semantic-similarity check against existing LIVE
+    # initiatives via AI_SIMILARITY; if the closest one is >= threshold and the caller did not
+    # force, HOLD and surface it so the human decides (add to it, or resubmit with P_FORCE => TRUE).
+    # Fails SAFE: any scoring hiccup falls through to a normal submit (never blocks on a nicety).
+    dup = None
+    if not p_force:
+        try:
+            top = session.sql(
+                "SELECT ID, TITLE, AI_SIMILARITY(?, TITLE || '. ' || COALESCE(CONTENT:hypothesis::string, '')) AS SIM "
+                "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+                "WHERE TYPE = 'INITIATIVE' AND SUPERSEDED_BY IS NULL "
+                "ORDER BY SIM DESC NULLS LAST LIMIT 1",
+                params=[qtext]
+            ).collect()
+            if top and top[0]["SIM"] is not None and float(top[0]["SIM"]) >= DUP_SIMILARITY_THRESHOLD:
+                dup = {"id": top[0]["ID"], "title": top[0]["TITLE"] or "", "sim": round(float(top[0]["SIM"]), 3)}
+        except Exception:
+            dup = None
+    if dup:
+        return ("HOLD - not submitted. This looks very similar (" + str(dup["sim"]) + ") to "
+                + dup["id"] + " '" + dup["title"] + "'. If it is genuinely different, resubmit with "
+                "P_FORCE => TRUE. Otherwise add your work under " + dup["id"] + ".")
+
+    # Prior-art scan (advisory, non-blocking): surface what we already know (RESEARCH/NARRATIVE + Radar).
     art = [{"id": h.get("ID"), "kind": h.get("TYPE"), "title": (h.get("TITLE") or "")[:160]}
            for h in _search(session, "GUPPIWHEEL.PUBLIC.ARTIFACTS_SEARCH_SVC", qtext, ["ID", "TYPE", "TITLE"], 4)]
     rad = [{"id": h.get("ID"), "kind": "RADAR:" + (h.get("SOURCE_NAME") or ""), "title": (h.get("TITLE") or "")[:160]}
@@ -117,6 +144,8 @@ def run(session, title, hypothesis, instructions):
     meta = {"priority": "P2", "submitted_via": "SUBMIT_INITIATIVE"}
     if prior:
         meta["related_prior_art"] = prior[:7]
+    if p_force:
+        meta["dup_override"] = True
     res = session.sql(
         "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, NULL, 'Initiate', NULL, NULL, ?)",
         params=["INITIATIVE", title, json.dumps(content), json.dumps(meta)]
@@ -130,10 +159,33 @@ def run(session, title, hypothesis, instructions):
         return "ERROR: " + out
     init_id = r.get("artifact_id", "INIT-?") if isinstance(r, dict) else "INIT-?"
     msg = "Submitted: " + init_id + " (Initiate). Rocky picks up within 5 minutes."
+    if p_force:
+        msg += " [dup-override]"
     preview = art[:2] + rad[:2]
     if preview:
         msg += " | Related prior art (advisory): " + "; ".join([(p["id"] or "?") + " " + (p["title"] or "") for p in preview])
     return msg
+$$;
+
+-- 3-arg entry point (viewer + COWORK agent call this): thin wrapper -> guarded 4-arg with P_FORCE=FALSE.
+-- Keeps every existing caller on the dup-gated path automatically; overriding requires the explicit 4-arg call.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(
+  "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR
+)
+RETURNS VARCHAR
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+def run(session, title, hypothesis, instructions):
+    r = session.sql(
+        "CALL GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(?, ?, ?, ?)",
+        params=[title, hypothesis, instructions, False]
+    ).collect()
+    return str(r[0][0]) if r else ""
 $$;
 
 -- =============================================================================
@@ -426,6 +478,7 @@ END;
 -- Grants
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ADVANCE_STAGE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR,BOOLEAN) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,VARIANT,ARRAY) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
@@ -1256,4 +1309,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.15.0', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.16.0', 'seed apply', FALSE);
