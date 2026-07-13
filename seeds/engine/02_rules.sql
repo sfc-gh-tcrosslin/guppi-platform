@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.0 — Engine Seed 02: Rules
+-- guppi-platform v3.16.1 — Engine Seed 02: Rules
 -- TIER 0 (INVARIANT): doctrine is data. Enabled RULES rows are authoritative; agents
 --   read them, never paraphrase. You may ADD rows (that extends doctrine); do not gut
 --   the core governance rules. See COCO.md, Tier 0 #5.
@@ -24,7 +24,7 @@ USING (
     ('RULE-014', 'GUIDING_PRINCIPLE', 'ALL', NULL, NULL,
      'TRUE',
      'warn', FALSE,
-     'Status Ownership: Submitters set Initiate. Agents set Research/Built/Narrated. Humans review and sign off.'),
+     'Status Ownership: Submitters set Initiate. Agents set Research/Built/Published. Humans review and sign off.'),
 
     ('RULE-015', 'GUIDING_PRINCIPLE', 'ALL', NULL, NULL,
      'TRUE',
@@ -76,21 +76,21 @@ USING (
      'Initiative cannot advance to Research without at least one RESEARCH child artifact'),
 
     ('STG-002', 'stage_transition', 'STORY', 'Research', 'Building',
-     'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE PARENT_ID = :artifact_id AND TYPE IN (''APP'',''MODEL'',''DASHBOARD''))',
+     'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE PARENT_ID = :artifact_id AND TYPE IN (SELECT TYPE FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE IS_APP))',
      'block', TRUE,
-     'Story cannot advance to Building without at least one APP/MODEL/DASHBOARD artifact linked'),
+     'Story cannot advance to Building without at least one app-family (APP/MODEL/DASHBOARD) artifact linked'),
 
     ('STG-003', 'stage_transition', 'APP', 'Building', 'Built',
      'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.TARS_AUDITS_V ar JOIN GUPPIWHEEL.PUBLIC.ARTIFACTS a ON ar.target_name = a.TITLE WHERE a.ID = :artifact_id AND ar.trust_score >= 0.85)',
      'block', TRUE,
      'App cannot advance to Built without a TARS audit scoring >= 0.85'),
 
-    ('STG-004', 'stage_transition', 'ALL', NULL, 'Narrated',
+    ('STG-004', 'stage_transition', 'ALL', NULL, 'Published',
      'EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.TARS_AUDITS_V ar JOIN GUPPIWHEEL.PUBLIC.ARTIFACTS a ON ar.target_name = a.TITLE WHERE a.ID = :artifact_id AND ar.human_vote IS NOT NULL)',
      'block', TRUE,
-     'Nothing advances to Narrated without a human affirmation vote on its TARS audit'),
+     'Nothing advances to Published without a human affirmation vote on its TARS audit'),
 
-    ('STG-005', 'stage_transition', 'OUTCOME', 'TRACKED', 'RESOLVED', '-- Enforcement deferred until INIT-37 OUTCOME type is Built; warn-level for now', 'warn', TRUE, 'OUTCOME artifacts use a distinct 4-stage lifecycle: ASPIRATIONAL (target stated before work) -> SELECTED (decision-maker commits) -> TRACKED (pointer wired to live data: snowflake_path / app_metric / external_url) -> RESOLVED (measured against the world). An OUTCOME should not reach RESOLVED without its pointer resolving to real data or an explicit human sign-off. This is the standalone lifecycle introduced in INIT-37; the standard artifact stages (Initiate->Research->Building->Built->Narrated) do NOT apply to OUTCOME.'),
+    ('STG-005', 'stage_transition', 'OUTCOME', 'TRACKED', 'RESOLVED', '-- Enforcement deferred until INIT-37 OUTCOME type is Built; warn-level for now', 'warn', TRUE, 'OUTCOME artifacts use a distinct 4-stage lifecycle: ASPIRATIONAL (target stated before work) -> SELECTED (decision-maker commits) -> TRACKED (pointer wired to live data: snowflake_path / app_metric / external_url) -> RESOLVED (measured against the world). An OUTCOME should not reach RESOLVED without its pointer resolving to real data or an explicit human sign-off. This is the standalone lifecycle introduced in INIT-37; the standard artifact stages (Initiate->Research->Building->Built->Published) do NOT apply to OUTCOME.'),
 
     -- ==========================================================================
     -- COMPLETENESS

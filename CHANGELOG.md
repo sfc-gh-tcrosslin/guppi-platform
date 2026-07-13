@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.16.1] — 2026-07-13
+
+### Refactor + rename — app-family/id-series to TYPE_REGISTRY; stage Narrated -> Published (INIT-37)
+
+Two bundled changes. (A) Centralize the last hardcoded type-group and the ID-series mapping into TYPE_REGISTRY (behavior-preserving). (B) Rename the terminal lifecycle stage Narrated -> Published to end the NARRATIVE-type vs Narrated-stage naming collision.
+
+- **(A) `TYPE_REGISTRY` gains `IS_APP`, `ID_SERIES_ENTITY`, `ID_PRODUCT_SCOPED`.** `APPS_V`, the `app_count` metric, the `STG-002` rule, and `CREATE_ARTIFACT`'s ID minting now all derive from these columns instead of a repeated `('APP','MODEL','DASHBOARD')` literal / hardcoded `if/elif`. Equivalence verified: APPS_V = 25 = direct count; app_count = 25; entity mapping reproduces exactly (APP/MODEL/DASHBOARD mint under APP-, STORY/DEFECT product-scoped). `APPS_V` relocated after the registry so it can reference it.
+- **(B) `Narrated` -> `Published`** across STAGES CSVs, `STG-004` (the human-vote gate; `TO_STAGE` updated so advances still gate), `RULE-014`/`STG-005` text, the semantic view, the viewer (py maps, filter option, CSS class), and living docs. Live migration: 52 artifacts moved Narrated -> Published; 0 stage-transition rows affected. Zero hash impact (STAGE is not in the birth-hash bundle) - VERIFY_CHAIN ok, no rows flagged from the migration. Health drift 0/0.
+- Known pre-existing (not from this change): `ROCKY_AB` (07_radar) narrative-create call is missing its `'NARRATIVE'` P_TYPE arg (6 params vs 7 placeholders) - already non-functional at that line; seed carries the stage rename for a future fix. COWORK agent prose (05_agents) updated in seed; live agent unchanged (cosmetic).
+
 ## [3.16.0] — 2026-07-13
 
 ### Feature — Warn-hard duplicate-initiative gate at submit time (INIT-75 / PLAT-28)

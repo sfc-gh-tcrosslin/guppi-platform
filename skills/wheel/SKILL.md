@@ -65,7 +65,7 @@ Show ID, title, stage, child count, days at stage. If no current, suggest `wheel
 
 ### wheel status
 
-List all my non-Narrated initiatives:
+List all my non-Published initiatives:
 
 ```sql
 SELECT ID, TITLE, STAGE, 
@@ -74,7 +74,7 @@ SELECT ID, TITLE, STAGE,
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
 WHERE TYPE = 'INITIATIVE' 
   AND OWNER = CURRENT_USER()
-  AND STAGE != 'Narrated'
+  AND STAGE != 'Published'
 ORDER BY UPDATED_AT DESC;
 ```
 

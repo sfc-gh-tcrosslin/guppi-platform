@@ -58,7 +58,7 @@ def query_guppi():
     """)
     stories = []
     for r in cur.fetchall():
-        stage_to_status = {'Building':'DONE','Research':'IN_PROGRESS','Initiate':'BACKLOG','Built':'DONE','Narrated':'DONE'}
+        stage_to_status = {'Building':'DONE','Research':'IN_PROGRESS','Initiate':'BACKLOG','Built':'DONE','Published':'DONE'}
         stories.append({
             "id": r[0], "epic_id": r[1] or "", "title": r[2], "description": r[3] or "",
             "priority": r[4] or "P2", "status": stage_to_status.get(r[5], 'BACKLOG'), "type": "STORY",
@@ -79,7 +79,7 @@ def query_guppi():
     """)
     defects = []
     for r in cur.fetchall():
-        stage_to_status = {'Research':'OPEN','Narrated':'CLOSED','Building':'VERIFIED','Built':'VERIFIED','Initiate':'OPEN'}
+        stage_to_status = {'Research':'OPEN','Published':'CLOSED','Building':'VERIFIED','Built':'VERIFIED','Initiate':'OPEN'}
         defects.append({
             "id": r[0], "epic_id": r[1] or "", "title": r[2], "description": r[3] or "",
             "severity": r[4] or "SEV3", "priority": r[5] or "P2", "status": stage_to_status.get(r[6], 'OPEN'),
@@ -98,7 +98,7 @@ def query_guppi():
     """)
     incidents = []
     for r in cur.fetchall():
-        stage_to_status = {'Research':'OPEN','Narrated':'CLOSED','Building':'RESOLVED','Built':'RESOLVED','Initiate':'OPEN'}
+        stage_to_status = {'Research':'OPEN','Published':'CLOSED','Building':'RESOLVED','Built':'RESOLVED','Initiate':'OPEN'}
         incidents.append({
             "id": r[0], "product_id": r[1] or "", "severity": r[2] or "SEV3", "status": stage_to_status.get(r[3], 'OPEN'),
             "title": r[4], "description": r[5] or "",
@@ -145,7 +145,7 @@ def query_guppi():
     """)
     initiatives = []
     for r in cur.fetchall():
-        stage_to_status = {'Initiate':'QUEUED','Research':'RUNNING','Building':'COMPLETE','Built':'COMPLETE','Narrated':'COMPLETE'}
+        stage_to_status = {'Initiate':'QUEUED','Research':'RUNNING','Building':'COMPLETE','Built':'COMPLETE','Published':'COMPLETE'}
         initiatives.append({
             "id": r[0], "title": r[1], "hypothesis": r[2] or "", "status": stage_to_status.get(r[3], 'QUEUED'),
             "priority": r[4] or "P2", "max_calls": r[5] or 10, "calls_used": r[6] or 0,

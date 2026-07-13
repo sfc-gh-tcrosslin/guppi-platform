@@ -25,7 +25,7 @@ GuppiWheel is the flywheel that tracks the full lifecycle of value creation. One
 ## Core Concepts
 
 - **Artifact** — any first-class object in the flywheel (initiative, research, story, app, model, hero, narrative, skill, audit, memory)
-- **Stage** — lifecycle position: Initiate → Research → Building → Built → Narrated
+- **Stage** — lifecycle position: Initiate → Research → Building → Built → Published
 - **Spin** — one complete pass through the flywheel (initiative to narrative, ready to deploy)
 - **Template** — reusable visualization pattern (Diverging Rivers, Parallel Futures, Waterfall, Sankey, Trajectory Archetypes)
 - **Ecosystem** — PK's market taxonomy (60 categories, 600+ companies, CRM-validated)
@@ -38,7 +38,7 @@ GuppiWheel is the flywheel that tracks the full lifecycle of value creation. One
 GUPPIWHEEL.PUBLIC.ARTIFACTS
 ├── ID          VARCHAR(36) PK — UUID or readable slug (e.g., 'ab-init-001')
 ├── TYPE        VARCHAR(20) — initiative, research, story, app, model, hero, narrative, skill, audit, defect, memory, ops_event
-├── STAGE       VARCHAR(20) — Initiate, Research, Building, Built, Narrated
+├── STAGE       VARCHAR(20) — Initiate, Research, Building, Built, Published
 ├── PARENT_ID   VARCHAR(36) — lineage: what produced this artifact
 ├── TITLE       VARCHAR(500)
 ├── CONTENT     VARIANT — flexible payload per type

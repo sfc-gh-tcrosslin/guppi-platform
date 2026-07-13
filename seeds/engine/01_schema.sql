@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.0 — Engine Seed 01: Schema
+-- guppi-platform v3.16.1 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -253,12 +253,7 @@ SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, 
        METADATA:story_points::NUMBER AS POINTS
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE = 'STORY';
 
-CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.APPS_V AS
-SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, UPDATED_AT,
-       METADATA:launch:app_type::VARCHAR AS APP_TYPE,
-       METADATA:launch:url::VARCHAR AS URL,
-       METADATA:launch:identifier::VARCHAR AS IDENTIFIER
-FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE TYPE IN ('APP','MODEL','DASHBOARD');
+-- APPS_V (app-family launchables) is defined BELOW, after TYPE_REGISTRY, because it derives from IS_APP.
 
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.NARRATIVES_V AS
 SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, UPDATED_AT,
@@ -354,37 +349,55 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.TYPE_REGISTRY (
     ID_PREFIX      VARCHAR(120),
     LIFECYCLE      VARCHAR(20)   NOT NULL,   -- standard | workitem | outcome
     STAGES         VARCHAR(300)  NOT NULL,   -- CSV of valid stages for this type
-    IS_LAUNCHABLE  BOOLEAN       NOT NULL DEFAULT FALSE,
+    IS_LAUNCHABLE  BOOLEAN       NOT NULL DEFAULT FALSE,   -- has metadata.launch (APP/MODEL/DASHBOARD/NARRATIVE)
+    IS_APP            BOOLEAN    NOT NULL DEFAULT FALSE,    -- app-family (APP/MODEL/DASHBOARD): drives APPS_V, app_count, STG-002
+    ID_SERIES_ENTITY  VARCHAR(40),                          -- ID_CONVENTIONS entity to mint under (NULL = use TYPE)
+    ID_PRODUCT_SCOPED BOOLEAN    NOT NULL DEFAULT FALSE,    -- TRUE => entity is TYPE_<UPPER(product)> (STORY/DEFECT)
     INTRODUCED_IN  VARCHAR(40),
     NOTES          VARCHAR(500),
     UPDATED_AT     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
+-- Self-heal for existing installs (CREATE TABLE IF NOT EXISTS won't add new columns):
+ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS IS_APP BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS ID_SERIES_ENTITY VARCHAR(40);
+ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS ID_PRODUCT_SCOPED BOOLEAN NOT NULL DEFAULT FALSE;
 
 MERGE INTO GUPPIWHEEL.PUBLIC.TYPE_REGISTRY t
 USING (
   SELECT column1 AS TYPE, column2 AS PURPOSE, column3 AS ID_PREFIX, column4 AS LIFECYCLE,
-         column5 AS STAGES, column6 AS IS_LAUNCHABLE, column7 AS INTRODUCED_IN, column8 AS NOTES
+         column5 AS STAGES, column6 AS IS_LAUNCHABLE, column7 AS INTRODUCED_IN, column8 AS NOTES,
+         column9 AS IS_APP, column10 AS ID_SERIES_ENTITY, column11 AS ID_PRODUCT_SCOPED
   FROM VALUES
-    ('INITIATIVE','A unit of intended value: a hypothesis to pursue. Root of a work tree; Rocky researches it and epics/stories hang under it.','INIT-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
-    ('EPIC','A large body of work grouping related stories under an initiative.','E-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
-    ('RESEARCH','Synthesis/findings (often produced by Rocky) that ground an initiative before building.','RES-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
-    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.','product-scoped: ENTITY=STORY_<PRODUCT> (PLAT-, ADONIS-, F6-, S-, ...)','workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Narrated',FALSE,'',''),
-    ('NARRATIVE','A published, launchable write-up (plan, story, briefing) rendered to HTML in the wheel.','NAR-','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
-    ('APP','A launchable application registered in the wheel (identifier/url/stage_path in metadata.launch).','APP-','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
-    ('MODEL','A launchable ML model registered in the wheel.','APP- (minted in the APP series)','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
-    ('DASHBOARD','A launchable dashboard/visualization registered in the wheel.','DASH-','standard','Initiate,Research,Building,Built,Narrated',TRUE,'',''),
-    ('DEFECT','A tracked defect/bug against product work. Product-scoped IDs.','product-scoped: ENTITY=DEFECT_<PRODUCT> (PLAT-D, F6-D, SC-D)','workitem','Research,Building,Built,Narrated,Resolved',FALSE,'',''),
-    ('INCIDENT','An operational incident record.','INC-','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
-    ('AUDIT','A read-only grounding/hygiene scan record (e.g., Stewart). System-generated; UUID IDs.','(UUID)','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
-    ('OPS_EVENT','An operational event / status marker (e.g., a product status snapshot).','OPS-<slug>','standard','Initiate,Research,Building,Built,Narrated',FALSE,'',''),
-    ('OUTCOME','A measurable target tracked against the real world. A pointer (snowflake_path / app_metric / external_url) must resolve to live data or an explicit human sign-off before RESOLVED.','OUT-','outcome','ASPIRATIONAL,SELECTED,TRACKED,RESOLVED',FALSE,'INIT-37','Distinct 4-stage lifecycle (STG-005); the standard Initiate->Narrated stages do NOT apply.'),
-    ('SKILL','A registered capability/recipe skill in the plugin.','<freeform slug>','standard','Initiate,Research,Building,Built,Narrated',FALSE,'','')
+    ('INITIATIVE','A unit of intended value: a hypothesis to pursue. Root of a work tree; Rocky researches it and epics/stories hang under it.','INIT-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('EPIC','A large body of work grouping related stories under an initiative.','E-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('RESEARCH','Synthesis/findings (often produced by Rocky) that ground an initiative before building.','RES-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.','product-scoped: ENTITY=STORY_<PRODUCT> (PLAT-, ADONIS-, F6-, S-, ...)','workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Published',FALSE,'','',FALSE,NULL,TRUE),
+    ('NARRATIVE','A published, launchable write-up (plan, story, briefing) rendered to HTML in the wheel.','NAR-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',FALSE,NULL,FALSE),
+    ('APP','A launchable application registered in the wheel (identifier/url/stage_path in metadata.launch).','APP-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
+    ('MODEL','A launchable ML model registered in the wheel.','APP- (minted in the APP series)','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
+    ('DASHBOARD','A launchable dashboard/visualization registered in the wheel.','DASH-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
+    ('DEFECT','A tracked defect/bug against product work. Product-scoped IDs.','product-scoped: ENTITY=DEFECT_<PRODUCT> (PLAT-D, F6-D, SC-D)','workitem','Research,Building,Built,Published,Resolved',FALSE,'','',FALSE,NULL,TRUE),
+    ('INCIDENT','An operational incident record.','INC-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('AUDIT','A read-only grounding/hygiene scan record (e.g., Stewart). System-generated; UUID IDs.','(UUID)','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('OPS_EVENT','An operational event / status marker (e.g., a product status snapshot).','OPS-<slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('OUTCOME','A measurable target tracked against the real world. A pointer (snowflake_path / app_metric / external_url) must resolve to live data or an explicit human sign-off before RESOLVED.','OUT-','outcome','ASPIRATIONAL,SELECTED,TRACKED,RESOLVED',FALSE,'INIT-37','Distinct 4-stage lifecycle (STG-005); the standard Initiate->Published stages do NOT apply.',FALSE,NULL,FALSE),
+    ('SKILL','A registered capability/recipe skill in the plugin.','<freeform slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE)
 ) s
 ON t.TYPE = s.TYPE
 WHEN MATCHED THEN UPDATE SET PURPOSE=s.PURPOSE, ID_PREFIX=s.ID_PREFIX, LIFECYCLE=s.LIFECYCLE,
-  STAGES=s.STAGES, IS_LAUNCHABLE=s.IS_LAUNCHABLE, INTRODUCED_IN=s.INTRODUCED_IN, NOTES=s.NOTES, UPDATED_AT=CURRENT_TIMESTAMP()
-WHEN NOT MATCHED THEN INSERT (TYPE,PURPOSE,ID_PREFIX,LIFECYCLE,STAGES,IS_LAUNCHABLE,INTRODUCED_IN,NOTES)
-  VALUES (s.TYPE,s.PURPOSE,s.ID_PREFIX,s.LIFECYCLE,s.STAGES,s.IS_LAUNCHABLE,s.INTRODUCED_IN,s.NOTES);
+  STAGES=s.STAGES, IS_LAUNCHABLE=s.IS_LAUNCHABLE, INTRODUCED_IN=s.INTRODUCED_IN, NOTES=s.NOTES,
+  IS_APP=s.IS_APP, ID_SERIES_ENTITY=s.ID_SERIES_ENTITY, ID_PRODUCT_SCOPED=s.ID_PRODUCT_SCOPED, UPDATED_AT=CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (TYPE,PURPOSE,ID_PREFIX,LIFECYCLE,STAGES,IS_LAUNCHABLE,INTRODUCED_IN,NOTES,IS_APP,ID_SERIES_ENTITY,ID_PRODUCT_SCOPED)
+  VALUES (s.TYPE,s.PURPOSE,s.ID_PREFIX,s.LIFECYCLE,s.STAGES,s.IS_LAUNCHABLE,s.INTRODUCED_IN,s.NOTES,s.IS_APP,s.ID_SERIES_ENTITY,s.ID_PRODUCT_SCOPED);
+
+-- APPS_V — app-family launchables. Derives from TYPE_REGISTRY.IS_APP (single source; defined after the registry).
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.APPS_V AS
+SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, UPDATED_AT,
+       METADATA:launch:app_type::VARCHAR AS APP_TYPE,
+       METADATA:launch:url::VARCHAR AS URL,
+       METADATA:launch:identifier::VARCHAR AS IDENTIFIER
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+WHERE TYPE IN (SELECT TYPE FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE IS_APP);
 
 -- GROUNDING_HEALTH_V — Stewart's senses (RULE-027). Deterministic grounding/hygiene drift signals; healthy = all N=0.
 -- canon_type + canon_stage DERIVE from TYPE_REGISTRY (single source; no hardcoded lists to drift).

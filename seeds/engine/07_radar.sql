@@ -165,7 +165,7 @@ def run(session, p_init_id):
 
     nar_id = "NAR-AB-" + num + "-" + ts
     ncontent = {"markdown": "# Rocky A/B: single vs swarm\n\n**Judge:** openai-gpt-4.1 (independent; no self-judging)\n\n**Verdict:** " + json.dumps(verdict) + "\n\n## Single-pass\n" + single[:4000] + "\n\n## Swarm (isolate + reconcile)\n" + swarm[:4000], "verdict": verdict}
-    session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?,?,NULL,?,?,'Narrated',?,?,?)",
+    session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?,?,NULL,?,?,'Published',?,?,?)",
         params=["Rocky A/B: single vs swarm -- " + title[:80], json.dumps(ncontent), p_init_id, json.dumps(["ab","radar","swarm"]), nar_id, json.dumps({"ab":True,"judge":"openai-gpt-4.1","single_research":sid,"swarm_research":wid,"pattern":"arcticswarm"})]).collect()
     return {"init":p_init_id,"single_research":sid,"swarm_research":wid,"comparison_narrative":nar_id,"verdict":verdict}
 $$;

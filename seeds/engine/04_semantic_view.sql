@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.0 — Engine Seed 04: Semantic View
+-- guppi-platform v3.16.1 — Engine Seed 04: Semantic View
 -- TIER 1 (DEFAULT): the semantic view shape is yours to re-author. It binds Cortex
 --   Analyst to ARTIFACTS for natural-language querying. See COCO.md.
 -- For Cortex Analyst natural-language querying via the Cowork agent.
@@ -34,7 +34,7 @@ CREATE OR REPLACE SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
       COMMENT = 'One of the 14 canonical types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL. Definitions/lifecycles are authoritative in TYPE_REGISTRY (joined) - see the PURPOSE/LIFECYCLE/TYPE_STAGES dimensions.',
     artifacts.stage AS STAGE
       WITH SYNONYMS = ('status', 'lifecycle stage')
-      COMMENT = 'Standard lifecycle: Initiate, Research, Building, Built, Narrated. STORY/DEFECT also use SELECTED/RESOLVED/Resolved. OUTCOME uses its own 4-stage lifecycle: ASPIRATIONAL, SELECTED, TRACKED, RESOLVED.',
+      COMMENT = 'Standard lifecycle: Initiate, Research, Building, Built, Published. STORY/DEFECT also use SELECTED/RESOLVED/Resolved. OUTCOME uses its own 4-stage lifecycle: ASPIRATIONAL, SELECTED, TRACKED, RESOLVED.',
     artifacts.owner AS OWNER
       WITH SYNONYMS = ('created by', 'author')
       COMMENT = 'Who owns this artifact',
@@ -54,7 +54,10 @@ CREATE OR REPLACE SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
       COMMENT = 'CSV of valid stages for this artifact type',
     type_registry.type_is_launchable AS IS_LAUNCHABLE
       WITH SYNONYMS = ('launchable')
-      COMMENT = 'Whether this type is a launchable (APP/MODEL/DASHBOARD/NARRATIVE)'
+      COMMENT = 'Whether this type is a launchable (APP/MODEL/DASHBOARD/NARRATIVE)',
+    type_registry.type_is_app AS IS_APP
+      WITH SYNONYMS = ('app family', 'app-family type')
+      COMMENT = 'Whether this type is app-family (APP/MODEL/DASHBOARD) - drives the app_count metric and APPS_V'
   )
 
   METRICS (
@@ -64,15 +67,15 @@ CREATE OR REPLACE SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
       COMMENT = 'Initiatives',
     artifacts.story_count AS COUNT(CASE WHEN artifacts.TYPE = 'STORY' THEN 1 END)
       COMMENT = 'Stories',
-    artifacts.app_count AS COUNT(CASE WHEN artifacts.TYPE IN ('APP','MODEL','DASHBOARD') THEN 1 END)
-      COMMENT = 'Apps, models, and dashboards',
+    artifacts.app_count AS COUNT(CASE WHEN type_registry.type_is_app THEN 1 END)
+      COMMENT = 'Apps, models, and dashboards (app-family, from TYPE_REGISTRY.IS_APP)',
     artifacts.narrative_count AS COUNT(CASE WHEN artifacts.TYPE = 'NARRATIVE' THEN 1 END)
       COMMENT = 'Narratives'
   )
 
   COMMENT = 'GuppiWheel — unified value creation engine'
 
-  AI_SQL_GENERATION 'ARTIFACTS is one table with all items; TYPE_REGISTRY (joined on TYPE) holds the canonical type taxonomy. The 14 types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL. For "what is an <TYPE>" or type-definition questions, read TYPE_REGISTRY.PURPOSE / LIFECYCLE / STAGES (do not guess). PARENT_ID traces lineage. CONTENT is VARIANT. METADATA is VARIANT with priority, tagged_users, product, launch. TAGS is ARRAY. Use UPPER(TYPE) for filters. Standard stages: Initiate, Research, Building, Built, Narrated; OUTCOME uses ASPIRATIONAL, SELECTED, TRACKED, RESOLVED.';
+  AI_SQL_GENERATION 'ARTIFACTS is one table with all items; TYPE_REGISTRY (joined on TYPE) holds the canonical type taxonomy. The 14 types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL. For "what is an <TYPE>" or type-definition questions, read TYPE_REGISTRY.PURPOSE / LIFECYCLE / STAGES (do not guess). PARENT_ID traces lineage. CONTENT is VARIANT. METADATA is VARIANT with priority, tagged_users, product, launch. TAGS is ARRAY. Use UPPER(TYPE) for filters. Standard stages: Initiate, Research, Building, Built, Published; OUTCOME uses ASPIRATIONAL, SELECTED, TRACKED, RESOLVED.';
 
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV TO ROLE GUPPIWHEEL_VIEWER;
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV TO ROLE GUPPIWHEEL_CONTRIBUTOR;

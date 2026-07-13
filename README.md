@@ -1,4 +1,4 @@
-# guppi-platform v3.16.0
+# guppi-platform v3.16.1
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -19,10 +19,10 @@ Includes:
 ## Lifecycle
 
 ```
-Initiate → Research → Building → Built → Narrated
+Initiate → Research → Building → Built → Published
 ```
 
-A Narrated artifact that spawns a follow-on creates a NEW artifact at Initiate. There is no "archived."
+A Published artifact that spawns a follow-on creates a NEW artifact at Initiate. There is no "archived."
 
 ## The Bond
 
@@ -132,7 +132,7 @@ Roles: GUPPIWHEEL_ADMIN > GUPPIWHEEL_CONTRIBUTOR > GUPPIWHEEL_VIEWER
 ## Architecture principles
 
 - **RULE-013 Headless First** — every output is an artifact. Render FROM artifacts.
-- **RULE-014 Status Ownership** — submitter sets Initiate; agent sets Research/Built/Narrated.
+- **RULE-014 Status Ownership** — submitter sets Initiate; agent sets Research/Built/Published.
 - **RULE-015 Collaboration Tags** — `metadata.tagged_users` for routing.
 - **RULE-016 No Self-Spawning** — agents never enqueue work for themselves.
 - **RULE-017 Separation of Execution** — Cowork dispatches, Rocky researches.

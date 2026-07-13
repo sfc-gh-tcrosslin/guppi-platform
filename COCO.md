@@ -29,7 +29,7 @@ you no longer have Guppi, you have something else. The conformance gate (below) 
 5. **Doctrine is data.** Enabled rows in `RULES` are authoritative. Agents read doctrine; they do not paraphrase or hardcode it.
 6. **Sub-agents propose, never change doctrine** (RULE-027 / STO-36-O). A sub-agent (e.g. Stewart) emits proposal artifacts. It never writes `RULES`, never sets `SUPERSEDED_BY`, never edits serving surfaces. This is structural, not just RBAC — and Stewart also watches the owner's own writes, because the table owner bypasses RBAC.
 7. **Headless-first** (RULE-013). Outputs are artifacts; rendering reads *from* artifacts. Never make a local file the primary output.
-8. **Lifecycle.** `Initiate → Research → Building → Built → Narrated` (OUTCOME runs its own `ASPIRATIONAL → SELECTED → TRACKED → RESOLVED` track). There is no "archived" — a follow-on is a new artifact at Initiate.
+8. **Lifecycle.** `Initiate → Research → Building → Built → Published` (OUTCOME runs its own `ASPIRATIONAL → SELECTED → TRACKED → RESOLVED` track). There is no "archived" — a follow-on is a new artifact at Initiate.
 
 ### Tier 1 — DEFAULTS (works on clone; yours to change)
 Ships fully-specified so it runs on first pull. Nothing here says "keep it." Re-author to your style as

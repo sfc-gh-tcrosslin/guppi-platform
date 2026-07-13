@@ -92,7 +92,7 @@ After generation, verify:
 INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, TAGS, OWNER, METADATA)
 SELECT
   CONCAT(LOWER(CURRENT_USER()), '-bootstrap-', TO_VARCHAR(CURRENT_DATE(), 'YYYYMMDD')),
-  'OPS_EVENT', 'Narrated',
+  'OPS_EVENT', 'Published',
   CONCAT('Bootstrap: ', CURRENT_USER(), ' joined GuppiWheel'),
   ARRAY_CONSTRUCT('bootstrap', 'onboarding', 'platform'),
   CURRENT_USER(),

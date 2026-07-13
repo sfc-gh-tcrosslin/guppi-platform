@@ -66,7 +66,7 @@ h1 span{color:var(--blue)}
 .stage-Research{background:rgba(41,181,232,.1);color:var(--blue)}
 .stage-Building{background:rgba(20,184,166,.1);color:var(--green)}
 .stage-Built{background:rgba(167,139,250,.1);color:var(--purple)}
-.stage-Narrated{background:rgba(236,72,153,.1);color:var(--pink)}
+.stage-Published{background:rgba(236,72,153,.1);color:var(--pink)}
 
 /* AILC tree */
 .init{background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:0.7rem;overflow:hidden}

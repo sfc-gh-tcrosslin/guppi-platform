@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.16.1 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -581,12 +581,17 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
             return {"error": "DUPLICATE: id already exists", "id": new_id}
     else:
         prod = (p_product if isinstance(p_product, str) else "").upper().strip()
-        if t == "STORY":
-            ent = "STORY_" + prod
-        elif t == "DEFECT":
-            ent = "DEFECT_" + prod
-        elif t in ("APP","MODEL","DASHBOARD"):
-            ent = "APP"
+        # ID-series mapping is governance-as-data in TYPE_REGISTRY (no hardcoded type list):
+        #   ID_PRODUCT_SCOPED -> entity is TYPE_<PRODUCT> (STORY/DEFECT); ID_SERIES_ENTITY -> that
+        #   explicit entity (APP/MODEL/DASHBOARD -> 'APP'); else the entity is the TYPE itself.
+        sr = session.sql(
+            "SELECT ID_SERIES_ENTITY, ID_PRODUCT_SCOPED FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE TYPE = ?",
+            params=[t]
+        ).collect()
+        if sr and sr[0]["ID_PRODUCT_SCOPED"]:
+            ent = t + "_" + prod
+        elif sr and sr[0]["ID_SERIES_ENTITY"]:
+            ent = sr[0]["ID_SERIES_ENTITY"]
         else:
             ent = t
         reg = session.sql(
@@ -1309,4 +1314,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.16.0', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.16.1', 'seed apply', FALSE);
