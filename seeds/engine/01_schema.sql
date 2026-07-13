@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.8.1 — Engine Seed 01: Schema
+-- guppi-platform v3.14.1 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -213,11 +213,10 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PLUGIN_VERSION (
     NOTES           VARCHAR(500)
 );
 
-MERGE INTO GUPPIWHEEL.PUBLIC.PLUGIN_VERSION t
-USING (SELECT 'guppi-platform' AS PLUGIN_NAME, '3.8.1' AS VERSION) s
-ON t.PLUGIN_NAME = s.PLUGIN_NAME
-WHEN MATCHED THEN UPDATE SET VERSION = s.VERSION, INSTALLED_AT = CURRENT_TIMESTAMP()
-WHEN NOT MATCHED THEN INSERT (PLUGIN_NAME, VERSION) VALUES (s.PLUGIN_NAME, s.VERSION);
+-- Version stamp: NOT set here. The single go-forward stamp is a governed call to
+-- PUBLISH_PLUGIN_VERSION at the end of 03_procs.sql (regression-proof; must equal
+-- .cortex-plugin/plugin.json — SDLC preflight Check 13.1). A raw literal MERGE used
+-- to live here and drifted stale (3.8.1) behind live installs; removed deliberately.
 
 -- =============================================================================
 -- ARTIFACT_ASSETS — internal stage for HTML/PDF bytes

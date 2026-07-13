@@ -2,6 +2,17 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.14.1] — 2026-07-12
+
+### Fix — governed, regression-proof plugin version stamp (resolves 3-way version drift)
+
+The plugin version was tracked in three places that had silently drifted: `plugin.json` (source, 3.14.0), the `01_schema.sql` stamp literal (3.8.1 — *staler than live*, so re-seeding would have **regressed** an install), and the live `PLUGIN_VERSION` table (3.10.1). This makes the version single-source and self-healing.
+
+- **New `PUBLISH_PLUGIN_VERSION` proc (`03_procs.sql`).** The governed, `EXECUTE AS OWNER` stamp path the `02_rules.sql` rule already described. Validates semver and enforces a **monotonicity guard** — refuses a lower version unless `P_FORCE => TRUE` — which is exactly what prevents a stale seed literal from regressing a live install. Direct DML on `PLUGIN_VERSION` stays revoked; this proc is the only writer. `v1` scope is semver + monotonicity; the full manifest-compatibility gate (dropped columns/procs, type narrowings) the rule describes remains a documented future extension.
+- **Stamp moved out of `01_schema.sql`.** The raw literal `MERGE` (which held the stale 3.8.1) is removed; the single go-forward stamp is now `CALL PUBLISH_PLUGIN_VERSION('3.14.1', 'seed apply', FALSE)` at the tail of `03_procs.sql` (after the proc is defined). Re-running the engine seed now self-heals the live version instead of regressing it.
+- **SDLC preflight three-way guard (`skills/sdlc-preflight/SKILL.md`, Check 13.1).** Asserts `plugin.json` version == the `03_procs.sql` stamp literal == live `PLUGIN_VERSION`. `plugin.json` is the single source of truth; the seed literal is a checked mirror; drift fails preflight before a push.
+- Dogfooded the new proc on a real 3.10.1 → 3.14.1 transition.
+
 ## [3.14.0] — 2026-07-12
 
 ### Feature — Guppi Slack Representative recipe (a *suggestion*, not substrate) + birth-hash attestation model (INIT-77, INIT-75)

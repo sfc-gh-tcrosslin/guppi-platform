@@ -261,13 +261,27 @@ For plugins that ship Snowflake objects (guppi-platform), the live account state
 
 **Source of truth:** the plugin's seed files. Live state should always match.
 
-#### 13.1 Plugin version match
+#### 13.1 Plugin version match (three-way)
 
+The version is single-sourced in `.cortex-plugin/plugin.json`. Two mirrors must agree with it:
+
+```bash
+# a) source of truth
+grep '"version"' .cortex-plugin/plugin.json
+# b) the go-forward seed stamp literal (the CALL at the tail of 03_procs.sql)
+grep "CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(" seeds/engine/03_procs.sql
+```
 ```sql
+-- c) live installed version
 SELECT VERSION FROM GUPPIWHEEL.PUBLIC.PLUGIN_VERSION WHERE PLUGIN_NAME = 'guppi-platform';
 ```
 
-Compare to `version` field in `.cortex-plugin/plugin.json`. **Mismatch = run `seeds/upgrades/<from>-to-<to>.sql`.**
+**Assert all three equal:** `plugin.json version` == the `PUBLISH_PLUGIN_VERSION('X', …)` literal in `03_procs.sql` == live `PLUGIN_VERSION`.
+
+- **plugin.json ≠ seed literal** → someone bumped the release but not the stamp (or vice-versa). Fix: set the `03_procs.sql` `CALL` literal to match `plugin.json` (plugin.json wins).
+- **seed literal ≠ live** → live is stale. Fix: run the engine seed (the tail `CALL PUBLISH_PLUGIN_VERSION` self-heals live), or `CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('<plugin.json version>', 'preflight reconcile', FALSE)`. The proc's monotonicity guard refuses a regression (pass `P_FORCE => TRUE` only for a deliberate rollback).
+
+**Pass:** all three identical. **Fail:** report which pair diverged + the fix above. (The stamp is written only via `PUBLISH_PLUGIN_VERSION` — never a raw `MERGE`; direct DML on `PLUGIN_VERSION` is revoked.)
 
 #### 13.2 Schema match
 

@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.8.1 — Engine Seed 03: Procedures
+-- guppi-platform v3.14.1 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -1197,3 +1197,59 @@ def run(session, p_artifact_id):
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- =============================================================================
+-- PUBLISH_PLUGIN_VERSION — the governed, regression-proof stamp path for
+-- PLUGIN_VERSION (the rule in 02_rules.sql describes this gate). Direct DML on
+-- PLUGIN_VERSION stays revoked; this EXECUTE-AS-OWNER proc is the only writer.
+-- v1 scope: semver validation + MONOTONICITY guard (refuses a lower version
+-- unless P_FORCE) — this is what prevents a stale seed literal from regressing a
+-- live install. The full manifest-compatibility gate the rule describes (dropped
+-- columns/tables/procs, type narrowings, rename-without-view-shim) is a
+-- documented FUTURE extension, not yet implemented here.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(
+    P_VERSION VARCHAR, P_NOTES VARCHAR DEFAULT NULL, P_FORCE BOOLEAN DEFAULT FALSE)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import re
+
+PLUGIN = 'guppi-platform'
+
+def _key(v):
+    return tuple(int(x) for x in v.split('.'))
+
+def run(session, p_version, p_notes, p_force):
+    v = (p_version or '').strip()
+    if not re.match(r'^\d+\.\d+\.\d+$', v):
+        return {"ok": False, "error": "invalid semver (expected N.N.N)", "given": p_version}
+    cur = session.sql(
+        "SELECT VERSION FROM GUPPIWHEEL.PUBLIC.PLUGIN_VERSION WHERE PLUGIN_NAME = ?",
+        params=[PLUGIN]).collect()
+    current = cur[0]["VERSION"] if cur else None
+    if current and not p_force and _key(v) < _key(current):
+        return {"ok": False, "error": "refusing version regression", "from": current, "to": v,
+                "hint": "pass P_FORCE => TRUE for a deliberate rollback"}
+    notes = p_notes if p_notes else 'published via PUBLISH_PLUGIN_VERSION'
+    session.sql(
+        "MERGE INTO GUPPIWHEEL.PUBLIC.PLUGIN_VERSION t "
+        "USING (SELECT ? AS PLUGIN_NAME, ? AS VERSION) s ON t.PLUGIN_NAME = s.PLUGIN_NAME "
+        "WHEN MATCHED THEN UPDATE SET VERSION = s.VERSION, INSTALLED_AT = CURRENT_TIMESTAMP(), "
+        "INSTALLED_BY = CURRENT_USER(), NOTES = ? "
+        "WHEN NOT MATCHED THEN INSERT (PLUGIN_NAME, VERSION, NOTES) VALUES (s.PLUGIN_NAME, s.VERSION, ?)",
+        params=[PLUGIN, v, notes, notes]).collect()
+    return {"ok": True, "plugin": PLUGIN, "from": current, "to": v, "forced": bool(p_force)}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCHAR, BOOLEAN) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- Self-heal stamp on every seed apply. This is the SINGLE go-forward version
+-- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
+-- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
+-- proof via the guard above; equal re-stamp is idempotent.
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.14.1', 'seed apply', FALSE);
