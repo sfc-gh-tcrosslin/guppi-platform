@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.1 — Engine Seed 01: Schema
+-- guppi-platform v3.16.2 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).

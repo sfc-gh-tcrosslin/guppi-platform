@@ -2,6 +2,12 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.16.2] — 2026-07-13
+
+### Fix — ROCKY_AB narrative-create argument count (07_radar.sql)
+
+`ROCKY_AB`'s comparison-narrative call passed 6 params to `CREATE_ARTIFACT`'s 7 placeholders — it was missing the leading `'NARRATIVE'` P_TYPE (the sibling RESEARCH calls in the same proc pass 7 correctly). The line was non-functional (and, after 3.15.0's TYPE enforcement, would hard-reject). Added the `'NARRATIVE'` type arg so the A/B comparison narrative is created correctly. Verified: the fixed 7-arg call binds (NARRATIVE type + Published stage accepted, reaches the dedup/duplicate path) with zero rows created. Not caused by any prior release — pre-existing bug surfaced during the Narrated→Published work.
+
 ## [3.16.1] — 2026-07-13
 
 ### Refactor + rename — app-family/id-series to TYPE_REGISTRY; stage Narrated -> Published (INIT-37)
