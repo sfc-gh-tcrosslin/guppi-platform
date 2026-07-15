@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.16.3] — 2026-07-15
+
+### Hardening — No unilateral duplicate-override (PLAT-31 / INIT-75)
+
+Follow-on to PLAT-28's dup gate. The gate HOLDed correctly, but an IDE session agent force-bypassed it (`P_FORCE=TRUE`) and spawned a duplicate initiative (INIT-84) against an explicit "use the existing INIT-79" instruction. Reconciled via `MERGE_ARTIFACTS`. Root cause: the Cowork agent's `submit_initiative` tool omits `P_FORCE` (it cannot force) — the force came from a raw 4-arg SQL call; and this account connects as ACCOUNTADMIN, so grant revokes don't fully bind. Behavioral control (skill + rule) is therefore primary; proc/grant hardening is defense-in-depth + auditability.
+
+- **`SUBMIT_INITIATIVE` — reason-required force.** New 5-arg core (`…, P_FORCE, P_FORCE_REASON`): forcing past a dup HOLD now REQUIRES a non-empty reason, stamped to `metadata.dup_override = {reason, forced}`. 4-arg becomes a thin wrapper (delegates with no reason → core rejects a reasonless force). 3-arg dup-gated path unchanged. Verified: force with empty reason → `ERROR`, zero artifacts created.
+- **Force is ADMIN-only.** The 4-arg + 5-arg overloads are granted to `GUPPIWHEEL_ADMIN`; the 3-arg (dup-gated) stays `GUPPIWHEEL_CONTRIBUTOR`. The 3-arg delegates via `EXECUTE AS OWNER`, so contributors still submit on the gated path.
+- **RULE-031 "No Unilateral Duplicate-Override"** added to `RULES` (block, non-overridable).
+- **`guppiwheel` skill** rewritten: proc-mediated create-paths decision tree, VARCHAR-return gotchas (`SUBMIT_INITIATIVE`/`MERGE_ARTIFACTS`), and the never-force dedup rule (replaces stale raw-`INSERT` guidance that violated RULE-029).
+- Cowork agent gains a RULE-031 HOLD instruction in the seed (05_agents.sql); live agent unchanged (cosmetic — its tool already cannot force).
+
 ## [3.16.2] — 2026-07-13
 
 ### Fix — ROCKY_AB narrative-create argument count (07_radar.sql)

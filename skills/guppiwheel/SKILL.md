@@ -78,25 +78,34 @@ WITH RECURSIVE lineage AS (
 SELECT ID, TYPE, STAGE, TITLE, PARENT_ID FROM lineage ORDER BY CREATED_AT;
 ```
 
-## Creating Artifacts
+## Creating Artifacts — proc-mediated (RULE-029). NEVER raw-INSERT.
 
-Always use readable IDs with a prefix pattern:
+Writes go through governed `EXECUTE AS OWNER` procs. Do **not** `INSERT INTO ARTIFACTS` directly
+and do **not** hand-assign IDs — the registry allocates them.
 
-- Initiatives: `{region}-init-{NNN}` (e.g., ab-init-001)
-- Research: `{region}-research-{NNN}`
-- Stories: `{region}-story-{NNN}`
-- Apps: `{region}-app-{NNN}`
-- Heroes: `{region}-hero-{NNN}`
-- Narratives: `{region}-narr-{NNN}`
+### Decision tree
+| You are creating… | Call | Notes |
+|---|---|---|
+| An **INITIATIVE** (research question for Rocky) | `SUBMIT_INITIATIVE(TITLE, HYPOTHESIS, INSTRUCTIONS)` | 3-arg, **always dup-gated**. Mints `INIT-N`. No product arg (product_id ends null → use TAGS). |
+| A **launchable** (NARRATIVE/APP/MODEL/DASHBOARD with a launch spec) | `PUBLISH_ARTIFACT(...)` | Something a human opens. |
+| **Anything else** (RESEARCH, STORY, EPIC, OUTCOME, AUDIT…) | `CREATE_ARTIFACT(P_TYPE, P_TITLE, P_PRODUCT, P_CONTENT, P_PARENT_ID, P_STAGE, P_TAGS, P_EXPLICIT_ID, P_METADATA)` | Under a parent. Pass `P_CONTENT`/`P_METADATA`/`P_TAGS` as **JSON STRINGS** (`TO_JSON(OBJECT_CONSTRUCT(...))`). Leave `P_EXPLICIT_ID` empty. |
 
-```sql
-INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, PARENT_ID, TITLE, CONTENT, TAGS, OWNER, METADATA)
-SELECT '{id}', '{type}', '{stage}', '{parent_id}', '{title}',
-  OBJECT_CONSTRUCT('key1','val1','key2','val2'),
-  ARRAY_CONSTRUCT('tag1','tag2'),
-  '{owner}',
-  OBJECT_CONSTRUCT('priority','P0','points',3);
-```
+### Return-type gotchas (these have bitten us)
+- `SUBMIT_INITIATIVE` and `MERGE_ARTIFACTS` return **VARCHAR** → do **NOT** wrap in `TO_JSON()` (errors "Invalid argument types for TO_JSON"; the CALL still ran). Read the string, or query the row back.
+- `CREATE_ARTIFACT` returns **VARIANT** → read via `SELECT TO_JSON("CREATE_ARTIFACT") FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`.
+
+### IDs / product scoping
+- Global series (INITIATIVE→`INIT-N`) and product-scoped STORY series live in `ID_CONVENTIONS`. STORY is `ID_PRODUCT_SCOPED` → entity `STORY_<PRODUCT>`.
+- **Platform/guppi tooling stories** use the `PLAT-N` series via an **explicit** `P_EXPLICIT_ID='PLAT-N'` with product `guppi` (the `STORY_GUPPI` series is unregistered — documented quirk; follow precedent, don't invent a new series mid-task).
+
+### ⚠️ THE DEDUP RULE (RULE-031 — no unilateral dup-override)
+`SUBMIT_INITIATIVE` HOLDs when a new initiative is `AI_SIMILARITY >= 0.80` to a live one, returning:
+*"…resubmit with P_FORCE => TRUE. Otherwise add your work under INIT-N."*
+
+- **On a HOLD, DEFAULT to adding your work under the named INIT-N.**
+- **Only force (`P_FORCE=TRUE`) on EXPLICIT human approval, and it now REQUIRES a reason** (`P_FORCE_REASON`, stamped to `metadata.dup_override`).
+- A "narrower scope" rationale **never** overrides an explicit "put it under INIT-N." (This is exactly how INIT-84 got wrongly spawned — see PLAT-31.)
+- The force overload is **ADMIN-only**; the Cowork agent's tool cannot force by design.
 
 ## Visualization Template Library
 

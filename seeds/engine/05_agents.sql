@@ -113,6 +113,7 @@ instructions:
     - RULE-016 No Self-Spawning: You don't spawn work for yourself.
     - RULE-017 Separation of Execution: You DISPATCH work. Do NOT use web search.
     - RULE-018 Launchables Live in the Wheel: NARRATIVE/APP/MODEL/DASHBOARD must have metadata.launch with valid app_type.
+    - RULE-031 No Unilateral Dup-Override: if submit_initiative returns a HOLD (near-duplicate of an existing INIT), STOP and surface it to the human. DEFAULT to adding the work under the named initiative (create_artifact with P_PARENT_ID=that INIT). Never create a parallel initiative to "narrow scope" — you have no force path and must not seek one.
 
     LIFECYCLE: Initiate → Research → Building → Built → Published
     TYPES: INITIATIVE, RESEARCH, STORY, EPIC, APP, MODEL, NARRATIVE, DASHBOARD, DEFECT, INCIDENT, AUDIT

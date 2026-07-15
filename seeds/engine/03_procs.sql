@@ -81,7 +81,7 @@ def run(session, p_artifact_id, p_target_stage, p_override_reason):
 -- SUBMIT_INITIATIVE — single-write to ARTIFACTS
 -- =============================================================================
 CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(
-  "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR, "P_FORCE" BOOLEAN
+  "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR, "P_FORCE" BOOLEAN, "P_FORCE_REASON" VARCHAR
 )
 RETURNS VARCHAR
 LANGUAGE PYTHON
@@ -106,7 +106,13 @@ def _search(session, svc, qtext, cols, limit):
     except Exception:
         return []
 
-def run(session, title, hypothesis, instructions, p_force):
+def run(session, title, hypothesis, instructions, p_force, p_force_reason):
+    # RULE-031 No Unilateral Duplicate-Override: forcing past a dup HOLD requires an explicit,
+    # non-empty reason (stamped to metadata.dup_override for audit). Empty reason on force = reject.
+    if p_force and not (p_force_reason and str(p_force_reason).strip()):
+        return ("ERROR: P_FORCE requires a non-empty P_FORCE_REASON. On a duplicate HOLD the default is "
+                "to add your work under the existing initiative; only a human may force a separate one, "
+                "with a recorded reason (RULE-031).")
     qtext = (title or "") + ". " + (hypothesis or "")
 
     # Duplicate GATE (warn-hard, overridable). Semantic-similarity check against existing LIVE
@@ -145,7 +151,7 @@ def run(session, title, hypothesis, instructions, p_force):
     if prior:
         meta["related_prior_art"] = prior[:7]
     if p_force:
-        meta["dup_override"] = True
+        meta["dup_override"] = {"reason": str(p_force_reason).strip(), "forced": True}
     res = session.sql(
         "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, NULL, 'Initiate', NULL, NULL, ?)",
         params=["INITIATIVE", title, json.dumps(content), json.dumps(meta)]
@@ -165,6 +171,27 @@ def run(session, title, hypothesis, instructions, p_force):
     if preview:
         msg += " | Related prior art (advisory): " + "; ".join([(p["id"] or "?") + " " + (p["title"] or "") for p in preview])
     return msg
+$$;
+
+-- 4-arg force signature (legacy): delegates to the 5-arg core with NO reason.
+-- Forcing without a reason is REJECTED by the core (RULE-031) — a reason is mandatory to force.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(
+  "TITLE" VARCHAR, "HYPOTHESIS" VARCHAR, "INSTRUCTIONS" VARCHAR, "P_FORCE" BOOLEAN
+)
+RETURNS VARCHAR
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+def run(session, title, hypothesis, instructions, p_force):
+    r = session.sql(
+        "CALL GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(?, ?, ?, ?, ?)",
+        params=[title, hypothesis, instructions, p_force, None]
+    ).collect()
+    return str(r[0][0]) if r else ""
 $$;
 
 -- 3-arg entry point (viewer + COWORK agent call this): thin wrapper -> guarded 4-arg with P_FORCE=FALSE.
@@ -478,7 +505,10 @@ END;
 -- Grants
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ADVANCE_STAGE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
-GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR,BOOLEAN) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+-- RULE-031: force overloads are ADMIN-only (contributors/agents cannot unilaterally override a dup HOLD).
+-- The 3-arg wrapper (above) still lets contributors submit on the dup-gated path (delegates via EXECUTE AS OWNER).
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR,BOOLEAN) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR,BOOLEAN,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,VARIANT,ARRAY) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
@@ -1314,4 +1344,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.16.2', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.16.3', 'seed apply', FALSE);
