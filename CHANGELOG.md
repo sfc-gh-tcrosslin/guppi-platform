@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.17.0] — 2026-07-15
+
+### Feature — "The Wheel" viewer tab: the two core principles on one page (PLAT-33 / E-27 / INIT-88)
+
+New global tab in the Guppi viewer that presents Guppi's two core principles side by side: the animated **GuppiWheel** (the engine — 5 stages orbiting an OUTCOME hub) and the **9-level CoCo Maturity Model** (how far the practice has climbed), meeting at **Level 9, Recursion**. Grounds the "GuppiWheel is our testbed for RSI" thesis (Weco AIDE2 ladder: 9.0 delegation → 9.1 net-positive → 9.2 ignition → 9.3 inflection) in a visible artifact.
+
+- **`templates/index.html`** — adds the `data-view="wheel"` global tab button + `#view-wheel` section.
+- **`static/guppi.js`** — `renderWheel()` builds the responsive layout (wheel canvas + 9-level model + apex sublevels) from `LEVELS`/`RSI_SUB` consts; ported canvas animation (`setupWheelCanvas`/`startWheel`/`_wcDraw`) from guppi-story-v3; `switchView` starts the animation on enter, stops it on leave.
+- **`static/guppi.css`** — "The Wheel" styles; sticky wheel column scoped to wide screens (`min-width:901px`) so the stacked narrow view doesn't overlap.
+
+Local viewer feature only — no seed/schema/proc changes. Chain unaffected (`VERIFY_CHAIN` ok, `unhashed_rows` 0 after an unrelated backfill of one legacy raw-inserted AUDIT row).
+
 ## [3.16.3] — 2026-07-15
 
 ### Hardening — No unilateral duplicate-override (PLAT-31 / INIT-75)
