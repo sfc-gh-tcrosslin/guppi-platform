@@ -575,12 +575,17 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
                 "hint": "register it in TYPE_REGISTRY first (governance-as-data)", "allowed": allowed}
     if not p_title:
         return {"error": "TITLE required"}
-    stage = (p_stage if isinstance(p_stage, str) else None) or "Initiate"
-    valid_stages = {r["S"] for r in session.sql(
-        "SELECT DISTINCT TRIM(s.VALUE) AS S FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY r, LATERAL SPLIT_TO_TABLE(r.STAGES, ',') s"
-    ).collect()}
-    if stage not in valid_stages:
-        return {"error": "invalid STAGE", "got": stage, "allowed": sorted(valid_stages)}
+    # Per-type stage lifecycle from TYPE_REGISTRY (governance-as-data). The FIRST stage in
+    # the type's ordered STAGES is its birth default (OUTCOME->ASPIRATIONAL, DEFECT->Research,
+    # standard types->Initiate). Validate against THIS type's stages only -- NOT the global
+    # union across all types -- so an artifact cannot be born outside its own lifecycle (PLAT-D4).
+    type_stages_csv = session.sql(
+        "SELECT STAGES AS S FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE TYPE = ?", params=[t]
+    ).collect()[0]["S"]
+    type_stages = [s.strip() for s in (type_stages_csv or "").split(",") if s.strip()]
+    stage = (p_stage.strip() if (isinstance(p_stage, str) and p_stage.strip()) else None) or (type_stages[0] if type_stages else "Initiate")
+    if stage not in type_stages:
+        return {"error": "invalid STAGE for type", "type": t, "got": stage, "allowed": type_stages}
 
     # --- DEDUP GUARD (idempotency; complements the single-write-path guarantee, RULE-029): reject byte-identical LIVE resubmits ---
     # Keyed on (TYPE, TITLE, PARENT, OWNER, canonical CONTENT+METADATA) among non-superseded rows.
@@ -1344,4 +1349,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.17.0', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.17.1', 'seed apply', FALSE);

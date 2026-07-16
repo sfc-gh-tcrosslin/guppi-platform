@@ -344,7 +344,7 @@ All Enterprise Build Profile operations use these abstract verbs. The backend ma
 
 When TARS completes an audit, results are automatically logged to the configured tracker:
 
-- **GUPPIWHEEL**: INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS with TYPE='AUDIT', trust score in CONTENT
+- **GUPPIWHEEL**: `CALL CREATE_ARTIFACT('AUDIT', …)` — the single gated write path (RULE-029). NEVER raw-`INSERT INTO ARTIFACTS`. Trust score in CONTENT.
 - **Jira**: Add comment to the linked story with trust score breakdown
 - **Manual**: Bond entry only (always written regardless of backend)
 

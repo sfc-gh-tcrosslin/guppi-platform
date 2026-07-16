@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.17.1] — 2026-07-16
+
+### Fix — CREATE_ARTIFACT per-type stage validation (PLAT-D4 / INIT-75)
+
+`CREATE_ARTIFACT` validated `P_STAGE` against the **union of every type's stages** and defaulted to `'Initiate'` — so an artifact whose lifecycle doesn't include `Initiate` could be born at an invalid stage without error. This bit OUTCOME (`ASPIRATIONAL → SELECTED → TRACKED → RESOLVED`) and DEFECT (`Research → …`): a no-stage create landed at `Initiate`, a stage neither type owns. Surfaced when a `GUPPIWHEEL_CONTRIBUTOR` tried to create an OUTCOME — their agent had raw-`INSERT`ed (correctly blocked by RULE-028) instead of calling the proc, masking the real per-type-stage gap.
+
+- **Per-type stage now.** The proc reads the type's ordered `TYPE_REGISTRY.STAGES`, **defaults `P_STAGE` to that type's first stage** (OUTCOME → `ASPIRATIONAL`, DEFECT → `Research`, standard types → `Initiate`), and **rejects any stage not in that type's own lifecycle** (`invalid STAGE for type`). No behavior change for callers already passing a type-valid stage; every internal delegating proc does.
+- **Stale raw-INSERT guidance purged** from our own docs an agent could imitate: `agents/tars.md` and `skills/guppi/SKILL.md` now show `CALL CREATE_ARTIFACT('AUDIT', …)`; `skills/guppiwheel/SKILL.md` gains an explicit OUTCOME example + per-type stage note.
+- Filed and tracked as **PLAT-D4** under INIT-75 (dogfooded: the defect itself was created at `Research`, since omitting the stage would have hit the very bug).
+
 ## [3.17.0] — 2026-07-15
 
 ### Feature — "The Wheel" viewer tab: the two core principles on one page (PLAT-33 / E-27 / INIT-88)

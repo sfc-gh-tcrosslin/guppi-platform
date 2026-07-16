@@ -46,35 +46,29 @@ B = selection pressure (audit enforcement strength)
 
 ## Storage
 
-Write audit results to GUPPIWHEEL.PUBLIC.ARTIFACTS as `TYPE='AUDIT'`:
+Write audit results as `TYPE='AUDIT'` through the single gated write path (RULE-029) — NEVER raw-`INSERT INTO ARTIFACTS` (contributors have no direct table DML; the proc allocates the `AUDIT-` id and computes the birth hash):
 
 ```sql
-INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, OWNER, PARENT_ID, CONTENT, METADATA)
-SELECT
-  'AUDIT-' || (SELECT NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = 'AUDIT'),
-  'AUDIT', 'Built',
+CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
+  'AUDIT',
   '<target_name> (<target_type>)',
-  'TARS',
-  '<parent_artifact_id_or_null>',
-  PARSE_JSON(OBJECT_CONSTRUCT(
-    'target', <target_name>,
-    'target_type', <target_type>,
-    'score', <trust_score>,
-    'grade', <grade>,
-    'c_signals', <c>,
-    'd_signals', <d>,
-    'total_checks', <n>,
-    'builder_vote', <builder_vote>,
-    'tars_vote', <tars_vote>,
-    'human_vote', NULL,
-    'findings', <findings_array>
-  )::VARCHAR),
-  PARSE_JSON(OBJECT_CONSTRUCT('trust_score', <trust_score>, 'grade', <grade>)::VARCHAR);
+  NULL,                                   -- product (NULL = customer-subject audit)
+  TO_JSON(OBJECT_CONSTRUCT(
+    'target', <target_name>, 'target_type', <target_type>,
+    'score', <trust_score>, 'grade', <grade>,
+    'c_signals', <c>, 'd_signals', <d>, 'total_checks', <n>,
+    'builder_vote', <builder_vote>, 'tars_vote', <tars_vote>,
+    'human_vote', NULL, 'findings', <findings_array>
+  )),
+  '<parent_artifact_id_or_null>',         -- P_PARENT_ID
+  'Built',                                -- P_STAGE (valid for AUDIT)
+  '["guppi"]',                            -- P_TAGS
+  NULL,                                   -- P_EXPLICIT_ID (registry allocates AUDIT-N)
+  TO_JSON(OBJECT_CONSTRUCT('trust_score', <trust_score>, 'grade', <grade>))
+);
 ```
 
-Don't forget to bump `ID_CONVENTIONS.NEXT_SEQ` for ENTITY='AUDIT'.
-
-The findings array embeds individual check results inline (no separate AUDIT_FINDINGS table — everything lives in the artifact's CONTENT).
+The proc allocates the id gap-free — never hand-assign it or bump `ID_CONVENTIONS` yourself. The findings array embeds individual check results inline (no separate AUDIT_FINDINGS table — everything lives in the artifact's CONTENT).
 
 ## Personality
 

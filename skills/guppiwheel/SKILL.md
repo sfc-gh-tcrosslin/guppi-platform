@@ -90,6 +90,14 @@ and do **not** hand-assign IDs — the registry allocates them.
 | A **launchable** (NARRATIVE/APP/MODEL/DASHBOARD with a launch spec) | `PUBLISH_ARTIFACT(...)` | Something a human opens. |
 | **Anything else** (RESEARCH, STORY, EPIC, OUTCOME, AUDIT…) | `CREATE_ARTIFACT(P_TYPE, P_TITLE, P_PRODUCT, P_CONTENT, P_PARENT_ID, P_STAGE, P_TAGS, P_EXPLICIT_ID, P_METADATA)` | Under a parent. Pass `P_CONTENT`/`P_METADATA`/`P_TAGS` as **JSON STRINGS** (`TO_JSON(OBJECT_CONSTRUCT(...))`). Leave `P_EXPLICIT_ID` empty. |
 
+**Stages are per-type.** Most types start at `Initiate`; a few differ — **OUTCOME** uses `ASPIRATIONAL → SELECTED → TRACKED → RESOLVED`, **DEFECT** starts at `Research`. As of **3.17.1**, `CREATE_ARTIFACT` defaults `P_STAGE` to the type's first registry stage (so OUTCOME → `ASPIRATIONAL` automatically) and **rejects a stage that isn't in that type's lifecycle**. Example:
+```sql
+CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
+  'OUTCOME', '<title>', NULL, '<content json>', '<parent_id>',
+  'ASPIRATIONAL', '<tags json>', NULL, NULL
+);
+```
+
 ### Return-type gotchas (these have bitten us)
 - `SUBMIT_INITIATIVE` and `MERGE_ARTIFACTS` return **VARCHAR** → do **NOT** wrap in `TO_JSON()` (errors "Invalid argument types for TO_JSON"; the CALL still ran). Read the string, or query the row back.
 - `CREATE_ARTIFACT` returns **VARIANT** → read via `SELECT TO_JSON("CREATE_ARTIFACT") FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`.
