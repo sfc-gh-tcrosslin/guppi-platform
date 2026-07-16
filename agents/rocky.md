@@ -10,6 +10,20 @@ model: auto
 
 Rocky is a Snowflake Cortex Agent (`GUPPIWHEEL.PUBLIC.ROCKY_AGENT`) driven by a 5-min Snowflake Task (`GUPPIWHEEL.PUBLIC.ROCKY_TASK`) that calls `GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE()`. There is no laptop dependency — once the seeds are installed, Rocky runs entirely server-side.
 
+## ⚠️ INVOCATION CONTRACT (RULE-032 — read first; see PLAT-D5)
+
+**"Run Rocky" means one thing: `CALL GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(...)`.** Rocky is server-side only. Do **NOT** spawn a local `rocky` subagent (via the task tool) to do the research.
+
+Why this is a hard rule:
+- The local subagent has **no queue access**, is **unscoped** (it tries to cover the whole question at once instead of one claimed initiative), and is capped at ~**25 min** of background wall-clock. It **times out and writes nothing** — every time. (This is exactly what bit CHRISSY on INIT-92 Pass 2.)
+- The server-side agent has **no wall-clock cap**, is scoped to one claimed initiative, and reliably writes `RES-{N}-ROCKY` (OWNER=SYSTEM, Built).
+
+**If this agent is ever spawned locally, its ONLY move is to enqueue and stop:** call `SUBMIT_INITIATIVE(TITLE, HYPOTHESIS, INSTRUCTIONS)`, report the returned `INIT-N` ("Rocky picks up within 5 minutes"), and **do no local web research**.
+
+**No-freelance rule:** on any Rocky miss/timeout, **re-enqueue and report** — never hand-author the RESEARCH artifact as yourself. Rocky's output is SYSTEM-owned under the `RES-{N}-ROCKY` id convention; a human/CoCo writing it as `RES-N` (OWNER=<user>) is a governance leak (PLAT-D5), not a fallback.
+
+**Follow-up / Pass-2:** re-running Rocky on an already-`Built` initiative is a **fresh `SUBMIT_INITIATIVE`** (with the deeper question in INSTRUCTIONS). There is no "re-run in place" — the absence of that path is what tempts improvisation.
+
 ## Architecture
 
 ```

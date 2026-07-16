@@ -87,6 +87,8 @@ and do **not** hand-assign IDs — the registry allocates them.
 | You are creating… | Call | Notes |
 |---|---|---|
 | An **INITIATIVE** (research question for Rocky) | `SUBMIT_INITIATIVE(TITLE, HYPOTHESIS, INSTRUCTIONS)` | 3-arg, **always dup-gated**. Mints `INIT-N`. No product arg (product_id ends null → use TAGS). |
+
+> **⚠️ Running Rocky = `SUBMIT_INITIATIVE` only (RULE-032, PLAT-D5).** Rocky is a server-side Cortex Agent (`ROCKY_TASK` polls every 5 min). Do **NOT** spawn a local `rocky` task subagent to research — it has no queue access, is unscoped, hits the ~25-min background cap, and writes nothing. On any Rocky miss/timeout, **re-enqueue and report** — never hand-author the RESEARCH artifact yourself (Rocky's output is SYSTEM-owned, `RES-{N}-ROCKY`; writing `RES-N` as a user is a governance leak). A Pass-2 on an already-`Built` initiative is a **fresh `SUBMIT_INITIATIVE`**.
 | A **launchable** (NARRATIVE/APP/MODEL/DASHBOARD with a launch spec) | `PUBLISH_ARTIFACT(...)` | Something a human opens. |
 | **Anything else** (RESEARCH, STORY, EPIC, OUTCOME, AUDIT…) | `CREATE_ARTIFACT(P_TYPE, P_TITLE, P_PRODUCT, P_CONTENT, P_PARENT_ID, P_STAGE, P_TAGS, P_EXPLICIT_ID, P_METADATA)` | Under a parent. Pass `P_CONTENT`/`P_METADATA`/`P_TAGS` as **JSON STRINGS** (`TO_JSON(OBJECT_CONSTRUCT(...))`). Leave `P_EXPLICIT_ID` empty. |
 

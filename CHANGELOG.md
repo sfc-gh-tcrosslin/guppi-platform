@@ -2,6 +2,17 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.17.2] — 2026-07-16
+
+### Fix — Rocky invocation routes to the local subagent footgun (PLAT-D5 / INIT-75)
+
+"Run Rocky" resolved to a **local `rocky` task-tool subagent** instead of the server-side agent. Because `agents/rocky.md` exists, CoCo Desktop exposes a local `rocky` subagent_type; spawning it runs unscoped foreground web research with a ~25-min background-agent cap, so it **times out and writes nothing**. CoCo then freelanced the RESEARCH as itself. Observed in CHRISSY's INIT-92 Pass 2: the local run was cancelled at the wall-clock limit, then `RES-11` was hand-authored (OWNER=CHRISSY, stuck at `Initiate`) — violating Rocky's SYSTEM / `RES-{N}-ROCKY` / Built attribution. Root cause is **invocation routing**, not infrastructure: `ROCKY_TASK` was healthy (every 5 min, all SUCCEEDED) the entire time.
+
+- **New RULE-032 (block)** — "Rocky Runs Server-Side; Never Spawn a Local Rocky." Running Rocky = one `SUBMIT_INITIATIVE(...)` call; a locally-invoked rocky agent may ONLY enqueue and stop; NO-FREELANCE on miss/timeout (re-enqueue, never hand-author the RESEARCH); a Pass-2 on an already-`Built` initiative is a fresh `SUBMIT_INITIATIVE`. Seeded (`seeds/engine/02_rules.sql`) and applied live.
+- **`agents/rocky.md`** — adds an "INVOCATION CONTRACT" section up top (server-side only, no local research, no freelance, Pass-2 = fresh submit).
+- **`skills/guppiwheel/SKILL.md`** — guardrail note on the `SUBMIT_INITIATIVE` decision-tree row.
+- Filed and tracked as **PLAT-D5** under INIT-75; cleanup superseded `RES-11` and re-queued the INIT-92 Pass 2 on the governed path.
+
 ## [3.17.1] — 2026-07-16
 
 ### Fix — CREATE_ARTIFACT per-type stage validation (PLAT-D4 / INIT-75)
