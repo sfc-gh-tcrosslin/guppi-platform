@@ -2,6 +2,18 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.17.3] — 2026-07-17
+
+### Fix — CREATE_ARTIFACT silently dropped prose bodies to `{}` (objective-side hardening)
+
+`CREATE_ARTIFACT` (the single gated write path, RULE-029) parsed `P_CONTENT` with `json.loads` and, on failure, **silently** fell back to `{}` — so any non-JSON body vanished with no error, no warning, and a green chain. Discovered when 14 artifacts captured in one session (`RES-9/13/14/15/16`, `PLAT-D5`, `TRE-1..8`) all read back as `{}`. Storage was never the problem (`CONTENT` is a 16 MB VARIANT); the proc was the problem.
+
+- **Smart content routing** in `CREATE_ARTIFACT` — routes `P_CONTENT` by first non-whitespace char: a JSON object/array is stored structured as-is; plain text/markdown is auto-wrapped into `{"body_md": "<text>"}` (prose is never lost); input that **looks** like JSON (`{`/`[`) but fails to parse returns a loud `{"error":"P_CONTENT is not valid JSON"}` and inserts nothing. `P_METADATA` is structured-only with the same loud-error behavior.
+- **`body_md` is now the first-class long-form key** — the NARRATIVE doc renderer prefers `CONTENT.body_md`; all typed-key views, dedup, and the birth-hash bundle are unaffected (additive key, no schema change).
+- **New `GET_ARTIFACT_BODY(id, offset, len)`** (read-only, VIEWER) — pages large bodies past a SQL client's cell-render cap (display-only, not storage).
+- **New RULE-033 (block)** — "Artifact Bodies Are JSON; Long-Form Prose Lives in CONTENT.body_md." Seeded (`seeds/engine/02_rules.sql`) and applied live.
+- Docs: `skills/guppiwheel/SKILL.md` gains a content-shape section; no backfill needed (existing bodies use valid JSON; `body_md` is additive).
+
 ## [3.17.2] — 2026-07-16
 
 ### Fix — Rocky invocation routes to the local subagent footgun (PLAT-D5 / INIT-75)

@@ -502,6 +502,27 @@ BEGIN
     RETURN 'OK: updated ' || :P_ARTIFACT_ID;
 END;
 
+-- Read-back helper for long-form bodies. CONTENT.body_md (or full CONTENT JSON when absent) can
+-- exceed a client's cell-render cap; this returns a SUBSTR slice so callers can page through it.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(
+  P_ARTIFACT_ID VARCHAR, P_OFFSET NUMBER DEFAULT 0, P_LEN NUMBER DEFAULT 4000
+)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+BEGIN
+    LET full_body VARCHAR := (
+        SELECT COALESCE(CONTENT:body_md::VARCHAR, TO_JSON(CONTENT))
+        FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+        WHERE ID = :P_ARTIFACT_ID AND SUPERSEDED_BY IS NULL
+    );
+    IF (:full_body IS NULL) THEN
+        RETURN 'ERROR: artifact not found (or superseded): ' || :P_ARTIFACT_ID;
+    END IF;
+    RETURN SUBSTR(:full_body, :P_OFFSET + 1, :P_LEN);
+END;
+
 -- Grants
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ADVANCE_STAGE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
@@ -512,6 +533,7 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VAR
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,VARIANT,ARRAY) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(VARCHAR,NUMBER,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE() TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
@@ -566,6 +588,41 @@ def _canon(o):
     except Exception:
         return None
 
+def _looks_json(s):
+    return len(s) > 0 and s[0] in ("{", "[")
+
+def _content_from(v):
+    # Smart routing: a JSON object/array is stored structured as-is; plain text/markdown is
+    # wrapped into CONTENT.body_md so prose is never silently lost; input that LOOKS like JSON
+    # ({ or [) but fails to parse raises -> caller returns a loud error (no silent {} fallback).
+    if v is None:
+        return {}
+    if isinstance(v, (dict, list)):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return {}
+        if _looks_json(s):
+            return json.loads(s)
+        return {"body_md": v}
+    return {}
+
+def _meta_from(v):
+    # Metadata is structured-only: object as-is; blank -> {}; JSON-looking-but-invalid raises.
+    if v is None:
+        return {}
+    if isinstance(v, (dict, list)):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if s == "":
+            return {}
+        if _looks_json(s):
+            return json.loads(s)
+        return {}
+    return {}
+
 def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_tags, p_explicit_id, p_metadata):
     t = (p_type or "").upper().strip()
     # TYPE must exist in the governed registry (RULE-029 single-write-path philosophy).
@@ -593,8 +650,16 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     # supersede the original first (SUPERSEDED_BY) and this check will no longer match.
     # Runs BEFORE ID allocation so a deduped resubmit never burns a gap-free sequence number.
     owner = session.sql("SELECT CURRENT_USER() AS C").collect()[0]["C"]
-    content = _asobj(p_content, {})
-    meta = _asobj(p_metadata, {})
+    try:
+        content = _content_from(p_content)
+    except Exception as e:
+        return {"error": "P_CONTENT is not valid JSON", "detail": str(e),
+                "hint": "pass a JSON object for structured content, or plain text/markdown (stored as CONTENT.body_md)"}
+    try:
+        meta = _meta_from(p_metadata)
+    except Exception as e:
+        return {"error": "P_METADATA is not valid JSON", "detail": str(e),
+                "hint": "P_METADATA must be a JSON object"}
     norm_parent = p_parent_id.strip() if (isinstance(p_parent_id, str) and p_parent_id.strip() and p_parent_id.strip() != 'None') else None
     inc_c, inc_m = _canon(content), _canon(meta)
     dup_rows = session.sql(
@@ -643,9 +708,6 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
         if _count(session, "SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", [new_id]) > 0:
             return {"error": "ALLOCATION COLLISION (counter behind data)", "id": new_id, "entity": ent}
 
-    owner = session.sql("SELECT CURRENT_USER() AS C").collect()[0]["C"]
-    content = _asobj(p_content, {})
-    meta = _asobj(p_metadata, {})
     tags = _asobj(p_tags, [])
     if not isinstance(tags, list):
         tags = []
@@ -1246,7 +1308,7 @@ def run(session, p_artifact_id):
     if _exists(existing):
         return {"artifact_id":p_artifact_id,"stage_path":existing,"created":False,"note":"existing html reused"}
 
-    md = content.get("narrative") or content.get("synthesis") or content.get("description") or content.get("summary") or ""
+    md = content.get("body_md") or content.get("narrative") or content.get("synthesis") or content.get("description") or content.get("summary") or ""
     if not md:
         md = "```\n" + json.dumps(content, indent=2) + "\n```"
     body = _md(md)
@@ -1349,4 +1411,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.17.2', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.17.3', 'seed apply', FALSE);

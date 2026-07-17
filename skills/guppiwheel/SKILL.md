@@ -100,6 +100,14 @@ CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
 );
 ```
 
+### Content bodies: structured JSON + `body_md` for prose (RULE-033)
+`CONTENT` is a JSON object, and `CREATE_ARTIFACT` smart-routes `P_CONTENT` by the first non-whitespace char:
+- **JSON object/array** (`{...}` / `[...]`) → stored structured as-is. Use top-level keys for small structured fields, e.g. `{"summary":"…","decision":"…","status":"PARKED"}`.
+- **Plain text / markdown** (anything not starting with `{`/`[`) → auto-wrapped into `{"body_md":"<text>"}`. Hand-authored long-form prose goes here — no need to escape it into JSON by hand.
+- **Malformed JSON** (starts with `{`/`[` but won't parse) → returns `{"error":"P_CONTENT is not valid JSON"}` and inserts **nothing**. No more silent `{}` bodies.
+
+Mixing both? Put prose under a `body_md` key alongside your structured keys. The NARRATIVE renderer prefers `body_md`. **Verify after every write:** `SELECT LENGTH(CONTENT::STRING) FROM ARTIFACTS WHERE ID=…` (`2` = `{}` = empty = fail). Read large bodies back in slices with `GET_ARTIFACT_BODY(id, offset, len)` — the SQL client's cell cap is display-only; storage is a 16 MB VARIANT.
+
 ### Return-type gotchas (these have bitten us)
 - `SUBMIT_INITIATIVE` and `MERGE_ARTIFACTS` return **VARCHAR** → do **NOT** wrap in `TO_JSON()` (errors "Invalid argument types for TO_JSON"; the CALL still ran). Read the string, or query the row back.
 - `CREATE_ARTIFACT` returns **VARIANT** → read via `SELECT TO_JSON("CREATE_ARTIFACT") FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`.
