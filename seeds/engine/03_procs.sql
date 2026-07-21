@@ -567,14 +567,22 @@ def norm(content, p_type):
     bm = content.get("body_md")
     if isinstance(bm, str) and bm.strip():
         return content
-    substantive = [k for k, v in content.items() if (isinstance(v, str) and v.strip()) or isinstance(v, (dict, list))]
-    aliases = [a for a in _ALIASES if isinstance(content.get(a), str) and content.get(a).strip()]
     out = dict(content)
-    if len(substantive) == 1 and len(aliases) == 1:
-        out["body_md"] = content[aliases[0]]
-        return out
+    # Promote the single body-alias (by _ALIASES priority) as the UNLABELED lead; append every
+    # OTHER key as a '## Section'. So the prose leads clean and metadata/supplements trail; a
+    # purely structured object (no alias) composes all keys as sections. Lossless either way.
+    lead_key = None
+    for a in _ALIASES:
+        av = content.get(a)
+        if isinstance(av, str) and av.strip():
+            lead_key = a
+            break
     parts = []
+    if lead_key is not None:
+        parts.append(content[lead_key].strip())
     for k, v in content.items():
+        if k == lead_key or k == "body_md":
+            continue
         if isinstance(v, str) and v.strip():
             seg = v
         elif isinstance(v, (dict, list)):
@@ -1496,4 +1504,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.0', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.1', 'seed apply', FALSE);

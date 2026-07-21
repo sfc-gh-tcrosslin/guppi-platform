@@ -2,6 +2,12 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.19.1] — 2026-07-21
+
+### Fix — Cleaner narrative composition: body-alias leads unlabeled
+
+`NORMALIZE_ARTIFACT_CONTENT`'s compose branch now promotes a single body alias (`markdown`/`body`/`description`/…) as the **unlabeled lead** and appends only the non-alias keys as `## Section` blocks — so prose leads clean instead of being buried under a `## Markdown` heading. Purely structured docs (no alias) compose all keys as sections, unchanged. Re-derived the previously-normalized narratives from their preserved originals.
+
 ## [3.19.0] — 2026-07-21
 
 ### Add — One canonical narrative shape: NORMALIZE_ARTIFACT_CONTENT at every write path
