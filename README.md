@@ -1,4 +1,4 @@
-# guppi-platform v3.19.2
+# guppi-platform v3.19.3
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -10,7 +10,7 @@ Includes:
 - **Rocky** — autonomous research Cortex Agent (server-side, serverless 5-min Task). Opt-in *swarm* on hard research (`metadata.swarm` or `priority=high`): profiled, isolated roles reconciled by a different model, preserving conflicts — the ArcticSwarm isolate-then-reconcile pattern (RULE-030)
 - **Radar** — standing weekday scan of major AI blogs. Isolated per-source fetch (ArcticSwarm fan-out) → portfolio-grounded assessment (relevance + related initiatives + *proposed* actions) → one rolling narrative
 - **Cowork** — user-facing dispatch agent (submit, advance, query, publish)
-- **Stewart** — propose-only grounding steward (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
+- **Stewart** — propose-only grounding sub-agent (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
 - **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023). Advisory *error-localization* on the winner: an independent model decomposes it into atomic claims and flags each grounded/unsupported/contradicted (ArcticSwarm "Agent GPA" pattern)
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
 - **The Bond** — the episodic-memory organ of the AILC: an append-only, co-created log of moments (`THE_BOND` database). Empty on install, private by default.
@@ -119,7 +119,7 @@ GUPPIWHEEL.PUBLIC
 ├── GUPPIWHEEL_SV          -- semantic view for Cortex Analyst
 ├── ROCKY_AGENT            -- web-search-only research agent
 ├── GUPPIWHEEL_COWORK_AGENT -- user-facing dispatch agent
-├── STEWART_AGENT          -- propose-only grounding steward (sub-agent)
+├── STEWART_AGENT          -- Stewart: propose-only grounding sub-agent
 ├── BOB_AGENT              -- Bob's web_search grounding scout (Building-stage)
 ├── BOB_EXECUTE proc        -- Bob: model bake-off + cross-judge → winner NARRATIVE
 ├── MODEL_CATALOG          -- enabled models for the bake-off (RULE-023, foundation-model agnosticism)

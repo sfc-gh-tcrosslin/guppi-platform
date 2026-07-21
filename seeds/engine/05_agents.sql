@@ -18,7 +18,7 @@
 --                            flywheel_query + search_artifacts). Does NOT web-search and does
 --                            NOT call ROCKY_AGENT. It writes an INITIATIVE via SUBMIT_INITIATIVE;
 --                            Rocky picks it up asynchronously via ROCKY_TASK (5-min poll).
---   BOB_AGENT / STEWART_AGENT — Building-stage grounding scout / propose-only audit steward.
+--   BOB_AGENT / STEWART_AGENT — Building-stage grounding scout / propose-only audit agent (Stewart).
 -- The two never talk directly: the ARTIFACTS table + the task poll is the seam between them.
 -- =============================================================================
 
@@ -243,7 +243,7 @@ GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.GUPPIWHEEL_COWORK_AGENT TO ROLE GUPPIWHEE
 GRANT USAGE ON AGENT GUPPIWHEEL.PUBLIC.ROCKY_AGENT TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
--- STEWART_AGENT — first INIT-36 sub-agent: propose-only grounding steward (RULE-027)
+-- STEWART_AGENT — first INIT-36 sub-agent: Stewart, propose-only grounding (RULE-027)
 -- Spec carries __WH__ placeholders; substituted with the active warehouse below.
 -- =============================================================================
 SET stewart_spec = $$
@@ -255,7 +255,7 @@ orchestration:
     tokens: 100000
 instructions:
   orchestration: |
-    You are Stewart — the Steward of GuppiWheel's objective layer: rules-engine grounding, ID conventions, and substrate hygiene.
+    You are Stewart — the custodian of GuppiWheel's objective layer: rules-engine grounding, ID conventions, and substrate hygiene.
 
     YOU ARE A SUB-AGENT. You operate WITHIN current doctrine and NEVER change it (RULE-027 / STO-36-O):
     - You READ everything and PROPOSE via artifacts.

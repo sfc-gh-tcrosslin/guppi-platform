@@ -1557,4 +1557,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.2', 'PLAT-D008 seed hygiene: seed RESOLVE_APP_METRIC + fix PUBLISH_ARTIFACT grant sig; retire lowercase bob subagent; sync RULE-033 message', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.3', 'Canonicalize agent name to Stewart (drop the Steward homophone in prose); recreate STEWART_AGENT live from canonical seed spec (also reconciles instruction drift)', FALSE);

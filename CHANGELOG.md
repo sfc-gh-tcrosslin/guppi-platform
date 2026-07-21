@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.19.3] — 2026-07-21
+
+### Fix — Canonicalize the agent name to "Stewart" (kill the Steward/Stewart drift)
+
+The propose-only grounding agent has one name — **Stewart** — but the homophone role-word *steward* had crept into prose and, notably, the live agent's own persona line ("You are Stewart — the Steward of…"). Machine-facing surfaces were already correct (`STEWART_AGENT`, `STEWART_AUDIT`, `STO-STEWART-`), so this pass only touches human-readable text.
+
+- **Prose reworded** across `README.md`, `CHANGELOG.md`, `agents/steward.md`, and the `05_agents.sql` comments/persona: the role-word *steward* is replaced with a plain synonym (*custodian* / *sub-agent*), keeping **Stewart** strictly as the proper name so nothing reads as "Stewart the Stewart."
+- **`STEWART_AGENT` recreated live** from the canonical seed spec. The live agent had drifted to an older, terser instruction set (deployed 2026-06-17, never refreshed) and still said "the Steward"; the redeploy fixes the name and restores the fuller seed instructions in one step.
+- **Deliberately left as-is** (identifiers, not prose): the `agents/steward.md` filename (rename needs the org-blocked `mv`), the `name: steward` subagent id, and the `steward_audit` tool alias. Renaming those would touch invocation surfaces for no functional gain.
+
 ## [3.19.2] — 2026-07-21
 
 ### Fix — Seed hygiene (PLAT-D008), lowercase-`bob` retirement, RULE-033 message sync
@@ -298,9 +308,9 @@ Prepared guppi-platform for its first external `git clone` by another SE. Made t
 - **README** refreshed to v3.6.0 (Stewart, warehouse/`EXECUTE MANAGED TASK` prereqs, conformance-gate verification step, `COCO.md` pointer). Fixed `PLUGIN_VERSION` seed drift (`3.0.0` → `3.6.0`).
 - **Genericized** `RULE-024` — removed a customer name from the secrets-hygiene reason text (seed + live).
 
-### Feature — Stewart, the Grounding Steward (first INIT-36 sub-agent)
+### Feature — Stewart, the Grounding custodian (first INIT-36 sub-agent)
 
-Shipped the first INIT-36 sub-agent and the dry run for the orchestrator/sub-agent pattern: a propose-only, Cortex-Analyst-oriented steward of the objective layer (rules-engine grounding, ID conventions, substrate hygiene).
+Shipped the first INIT-36 sub-agent and the dry run for the orchestrator/sub-agent pattern: a propose-only, Cortex-Analyst-oriented custodian of the objective layer (rules-engine grounding, ID conventions, substrate hygiene).
 
 - **`RULE-027`** — Doctrine-Change Authority Is Orchestrator-Only. Sub-agents operate within current doctrine: they read everything and **propose via artifacts**, but never write `RULES`, set `SUPERSEDED_BY`, or alter serving surfaces. Realizes `STO-36-O`.
 - **`GROUNDING_HEALTH_V`** — Stewart's senses: deterministic drift signals (duplicate IDs, orphan parents, non-canonical TYPE/STAGE, dead-DB rule refs, non-canonical `APPLIES_TO_TYPE`).
