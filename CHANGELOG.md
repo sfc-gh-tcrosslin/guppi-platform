@@ -2,6 +2,19 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.19.0] — 2026-07-21
+
+### Add — One canonical narrative shape: NORMALIZE_ARTIFACT_CONTENT at every write path
+
+Narrative `CONTENT` had drifted across 5+ shapes (only 4 of ~83 used the canonical `body_md`) because `CREATE_ARTIFACT` stored structured objects as-is and `UPDATE_OWN_ARTIFACT` normalized nothing — so the viewer's Open rendered raw JSON / incomplete data.
+
+- **New `NORMALIZE_ARTIFACT_CONTENT(VARIANT, VARCHAR)` UDF** — one pure, shared normalizer. For renderable types (`NARRATIVE`) it guarantees `CONTENT.body_md`: promotes a single body alias, else losslessly composes every key into `## Section` blocks. NULL-in → NULL-out.
+- **Wired into BOTH write paths** (`CREATE_ARTIFACT` + `UPDATE_OWN_ARTIFACT`) so narratives are born canonical for every producer.
+- **`ENSURE_NARRATIVE_HTML` trusts `body_md`** (defensive on-the-fly compose via the same UDF; no more raw JSON dump).
+- **Producer tidy**: `BOB_EXECUTE` + `RADAR` write `body_md` directly.
+- **RULE-033** ratified: `body_md` guaranteed at all write paths.
+- Backfill of existing narratives + stale-render invalidation ships as a follow-on data pass (same UDF).
+
 ## [3.18.1] — 2026-07-21
 
 ### Fix — Bob unblocked (malformed model config) + audience-conditional rubric

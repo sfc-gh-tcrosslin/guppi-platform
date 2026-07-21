@@ -495,7 +495,7 @@ BEGIN
     END IF;
     UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
        SET TITLE = COALESCE(:P_TITLE, TITLE),
-           CONTENT = COALESCE(:P_CONTENT, CONTENT),
+           CONTENT = COALESCE(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(:P_CONTENT, (SELECT TYPE FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID)), CONTENT),
            TAGS = COALESCE(:P_TAGS, TAGS),
            UPDATED_AT = CURRENT_TIMESTAMP()
      WHERE ID = :P_ARTIFACT_ID;
@@ -535,6 +535,59 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,V
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(VARCHAR,NUMBER,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE() TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- NORMALIZE_ARTIFACT_CONTENT — the ONE canonical content-shape normalizer (RULE-033).
+-- Pure function (no session): guarantees renderable types carry CONTENT.body_md.
+-- Called by BOTH write paths (CREATE_ARTIFACT + UPDATE_OWN_ARTIFACT) and the one-time
+-- backfill, so the shape is enforced once, at the door, for every producer. NULL in -> NULL
+-- out (so UPDATE's COALESCE no-ops). Lossless: single-body objects promote their alias;
+-- multi-key structured objects compose EVERY key into a '## Section' (never drops content).
+-- =============================================================================
+CREATE OR REPLACE FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(P_CONTENT VARIANT, P_TYPE VARCHAR)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+HANDLER = 'norm'
+AS
+$$
+import json
+# Canonical renderable set. Extend here (or migrate to a TYPE_REGISTRY.RENDERABLE flag) to render more types.
+RENDERABLE = {"NARRATIVE"}
+_ALIASES = ["markdown", "body", "narrative", "synthesis", "description", "summary"]
+def _title(k):
+    return k.replace("_", " ").strip().title()
+def norm(content, p_type):
+    if content is None:
+        return None
+    if not isinstance(content, dict):
+        return content
+    if (p_type or "").upper().strip() not in RENDERABLE:
+        return content
+    bm = content.get("body_md")
+    if isinstance(bm, str) and bm.strip():
+        return content
+    substantive = [k for k, v in content.items() if (isinstance(v, str) and v.strip()) or isinstance(v, (dict, list))]
+    aliases = [a for a in _ALIASES if isinstance(content.get(a), str) and content.get(a).strip()]
+    out = dict(content)
+    if len(substantive) == 1 and len(aliases) == 1:
+        out["body_md"] = content[aliases[0]]
+        return out
+    parts = []
+    for k, v in content.items():
+        if isinstance(v, str) and v.strip():
+            seg = v
+        elif isinstance(v, (dict, list)):
+            seg = "```json\n" + json.dumps(v, indent=2, default=str) + "\n```"
+        else:
+            continue
+        parts.append("## " + _title(k) + "\n\n" + seg)
+    out["body_md"] = "\n\n".join(parts)
+    return out
+$$;
+GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(VARIANT,VARCHAR) TO ROLE GUPPIWHEEL_VIEWER;
+GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(VARIANT,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(VARIANT,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
 -- CREATE_ARTIFACT — the single gated write path (RULE-029): the ONLY proc that INSERTs into ARTIFACTS.
@@ -655,6 +708,15 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     except Exception as e:
         return {"error": "P_CONTENT is not valid JSON", "detail": str(e),
                 "hint": "pass a JSON object for structured content, or plain text/markdown (stored as CONTENT.body_md)"}
+    # Canonical shape (RULE-033): renderable types get a guaranteed CONTENT.body_md via the ONE
+    # shared normalizer (same UDF UPDATE_OWN_ARTIFACT + the backfill use). Born-canonical, every producer.
+    try:
+        _nr = session.sql("SELECT TO_JSON(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(PARSE_JSON(?), ?)) AS J",
+                          params=[json.dumps(content), t]).collect()
+        if _nr and _nr[0]["J"]:
+            content = json.loads(_nr[0]["J"])
+    except Exception:
+        pass
     try:
         meta = _meta_from(p_metadata)
     except Exception as e:
@@ -1121,7 +1183,7 @@ def run(session, p_research_id, p_target, p_angle):
         "n_unsupported": unsupported, "n_contradicted": contradicted, "claims": claims}
 
     tag = (target.split()[0].lower() if target else "bob")
-    nar_content = {"markdown": win_text, "target": target, "winner_model": winner}
+    nar_content = {"body_md": win_text, "target": target, "winner_model": winner}
     nar_meta = {"winner_model": winner, "run_id": run_id, "bakeoff": results,
         "grounding": {"research_id": p_research_id, "agent": "BOB_AGENT", "bond": True},
         "no_guppi_mention": (not is_internal), "built_by": "BOB_EXECUTE", "claim_localization": localization}
@@ -1321,9 +1383,19 @@ def run(session, p_artifact_id):
     if _exists(existing):
         return {"artifact_id":p_artifact_id,"stage_path":existing,"created":False,"note":"existing html reused"}
 
-    md = content.get("body_md") or content.get("narrative") or content.get("synthesis") or content.get("description") or content.get("summary") or ""
+    md = content.get("body_md") or ""
     if not md:
-        md = "```\n" + json.dumps(content, indent=2) + "\n```"
+        # Defensive (post-normalization this should not fire): compose losslessly via the shared
+        # normalizer instead of raw-dumping JSON. Handles pre-migration cached rows on the fly.
+        try:
+            _rr = session.sql("SELECT TO_JSON(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(PARSE_JSON(?), 'NARRATIVE')) AS J",
+                              params=[json.dumps(content)]).collect()
+            if _rr and _rr[0]["J"]:
+                md = (json.loads(_rr[0]["J"]).get("body_md") or "")
+        except Exception:
+            md = ""
+    if not md:
+        md = "_(empty narrative)_"
     body = _md(md)
     title = r["TITLE"] or p_artifact_id
     bits = [_esc(r["STAGE"])]
@@ -1424,4 +1496,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.18.1', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.0', 'seed apply', FALSE);
