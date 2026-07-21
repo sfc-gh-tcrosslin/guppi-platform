@@ -2,6 +2,17 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.18.0] — 2026-07-21
+
+### Add — Orchestrator role ladder: GUPPI_BUILDER tier + RULE-034 (least-privilege posture)
+
+CoCo is meant to operate as an orchestrator (least-privilege), routing every wheel change through the governed procs — but nothing shipped a builder tier for MVP work, and the guppiwheel skill still told contributors they could "insert/update artifacts" directly (contradicting the RULE-028 lockdown).
+
+- **New `GUPPI_BUILDER` role** (`seeds/engine/01_schema.sql`), between CONTRIBUTOR and ADMIN: inherits `GUPPIWHEEL_CONTRIBUTOR` and adds `CREATE DATABASE/WAREHOUSE/COMPUTE POOL/APPLICATION/APPLICATION PACKAGE` + `BIND SERVICE ENDPOINT` + `CORTEX_USER` for building MVPs — with **no** direct `ARTIFACTS`/`RULES` DML, so elevating to build never reopens the wheel-write hole.
+- **New RULE-034 (warn)** — "IDE Session Agent Operates as Orchestrator (Least-Privilege by Default)." Documents the posture AND the critical mechanic that `USE ROLE` alone does not constrain an admin-holder (sessions default to `SECONDARY ROLES = ALL`); genuine least-privilege needs `USE SECONDARY ROLES NONE` or `DEFAULT_SECONDARY_ROLES=()`. Seeded and applied live.
+- **Fixed stale RBAC doc** in `skills/guppiwheel/SKILL.md` (contributors are procedure-mediated, not direct-DML) and added an Operating Posture section.
+- Per-user `DEFAULT_ROLE`/`DEFAULT_SECONDARY_ROLES` posture and granting the builder to humans are **account** operations (not seeded), by design.
+
 ## [3.17.3] — 2026-07-17
 
 ### Fix — CREATE_ARTIFACT silently dropped prose bodies to `{}` (objective-side hardening)

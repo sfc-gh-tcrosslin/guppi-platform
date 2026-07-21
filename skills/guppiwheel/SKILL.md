@@ -161,9 +161,16 @@ ORDER BY CREATED_AT;
 
 | Role | Access | Who |
 |---|---|---|
-| GUPPIWHEEL_ADMIN | Full CRUD, schema changes | Todd |
-| GUPPIWHEEL_CONTRIBUTOR | Insert/update artifacts, read all | IPs (PK, etc.) |
 | GUPPIWHEEL_VIEWER | Read only | Customers, stakeholders |
+| GUPPIWHEEL_CONTRIBUTOR | Wheel writes ONLY via governed procs (no direct ARTIFACTS/RULES DML); read all | IPs; CoCo default |
+| GUPPI_BUILDER | Elevate to create DBs/warehouses/SPCS/apps for MVPs; inherits CONTRIBUTOR; NO wheel DML | Builders |
+| GUPPIWHEEL_ADMIN | Full CRUD, schema changes, doctrine | Todd |
+
+## Operating posture (RULE-034)
+
+CoCo operates as an **orchestrator**: default role `GUPPIWHEEL_CONTRIBUTOR`, every wheel change through the procs above, never `ACCOUNTADMIN` for wheel work, never raw DML on `ARTIFACTS`/`RULES`. Elevate deliberately — `USE ROLE GUPPI_BUILDER` to build MVPs (DBs/warehouses/SPCS/apps), `USE ROLE ACCOUNTADMIN` only as break-glass.
+
+**Critical:** `USE ROLE` alone does NOT drop privilege if your identity holds admin — sessions default to `SECONDARY ROLES = ALL`, which keeps admin live regardless of the primary role. To actually constrain an admin-holder: `USE SECONDARY ROLES NONE` in-session, or durably `ALTER USER x SET DEFAULT_ROLE=GUPPIWHEEL_CONTRIBUTOR, DEFAULT_SECONDARY_ROLES=()`. Non-admin identities are constrained by RBAC directly. The binding control is the role/secondary-roles the connection holds — this guidance is not itself enforcement.
 
 ## Ecosystem Layer (PK's Taxonomy)
 

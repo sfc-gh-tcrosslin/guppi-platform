@@ -531,3 +531,25 @@ GRANT READ, WRITE ON STAGE GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS TO ROLE GUPPIWHEEL_
 -- UPDATE/DELETE for data surgery/corrections. This is what makes "no duplicate IDs" a real invariant
 -- (Snowflake does not enforce PK/UNIQUE). A future GRANT INSERT here re-opens the hole -- see guppiwheel-governance.
 REVOKE INSERT ON TABLE GUPPIWHEEL.PUBLIC.ARTIFACTS FROM ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- BUILDER tier (GUPPI_BUILDER) — sits between CONTRIBUTOR and ADMIN (RULE-034).
+-- Lets a CoCo operator elevate from CONTRIBUTOR to create DBs / warehouses / SPCS
+-- / apps for MVPs WITHOUT ACCOUNTADMIN. It inherits CONTRIBUTOR (wheel work stays
+-- procedure-mediated) and is granted NO direct ARTIFACTS/RULES DML, so elevating
+-- to build an MVP never reopens the wheel-write hole (governance preserved).
+-- Orchestrator posture: default role = CONTRIBUTOR; `USE ROLE GUPPI_BUILDER` to build.
+-- NOTE: per-user DEFAULT_ROLE / DEFAULT_SECONDARY_ROLES posture and granting this
+-- role to specific humans are ACCOUNT operations (not seeded) — see RULE-034.
+-- =============================================================================
+CREATE ROLE IF NOT EXISTS GUPPI_BUILDER
+  COMMENT = 'Guppi builder tier: elevate from GUPPIWHEEL_CONTRIBUTOR to create DBs/warehouses/SPCS/apps for MVPs. NOT ACCOUNTADMIN; no ARTIFACTS/RULES DML (wheel governance preserved).';
+GRANT ROLE GUPPIWHEEL_CONTRIBUTOR TO ROLE GUPPI_BUILDER;   -- inherit wheel orchestration (procs) + SELECT; NO wheel DML
+GRANT ROLE GUPPI_BUILDER TO ROLE SYSADMIN;                 -- role hierarchy hygiene
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE GUPPI_BUILDER;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE GUPPI_BUILDER;
+GRANT CREATE COMPUTE POOL ON ACCOUNT TO ROLE GUPPI_BUILDER;       -- SPCS
+GRANT CREATE APPLICATION ON ACCOUNT TO ROLE GUPPI_BUILDER;
+GRANT CREATE APPLICATION PACKAGE ON ACCOUNT TO ROLE GUPPI_BUILDER;
+GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE GUPPI_BUILDER;    -- SPCS ingress
+GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE GUPPI_BUILDER;
