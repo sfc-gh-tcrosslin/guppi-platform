@@ -6,7 +6,7 @@ tools:
   - AI_COMPLETE bake-off over MODEL_CATALOG (BOB_EXECUTE)
   - cross-judge panel -> in-wheel AUDIT artifacts (TARS_AUDITS_V)
   - CREATE_ARTIFACT (winner NARRATIVE)
-model: per-candidate (every enabled MODEL_CATALOG model); judges cross-score
+model: auto
 ---
 
 # Bob — the Builder (Building-stage agent)

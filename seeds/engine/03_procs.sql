@@ -979,13 +979,16 @@ def _ai(session, model, prompt):
 
 def run(session, p_research_id, p_target, p_angle):
     rows = session.sql(
-        "SELECT TITLE, PARENT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN, CONTENT:conflicts::string AS CONFLICTS "
+        "SELECT TITLE, PARENT_ID, PRODUCT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN, CONTENT:conflicts::string AS CONFLICTS "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[p_research_id]).collect()
     if not rows:
         return {"error": "research not found", "id": p_research_id}
     init_id = rows[0]["PARENT_ID"]; synthesis = rows[0]["SYN"] or ""
     conflicts = rows[0]["CONFLICTS"] or ""
     target = p_target or rows[0]["TITLE"]; angle = p_angle or ""
+    # Audience: internal (Guppi-facing) if the artifact's product is guppi OR the angle says so;
+    # else customer/external (default). Customer mode keeps the Guppi scrub; internal names Guppi freely.
+    is_internal = (str(rows[0]["PRODUCT_ID"] or "").lower() == "guppi") or ("internal" in (angle or "").lower()) or ("for guppi" in (angle or "").lower())
 
     gup = ""
     if init_id:
@@ -1007,12 +1010,22 @@ def run(session, p_research_id, p_target, p_angle):
     except Exception as e:
         brief = "(grounding agent unavailable: " + str(e)[:200] + ")"
 
-    rubric = ("You are Bob, a narrative builder for a Snowflake healthcare team. Using ONLY the grounding below, "
-        "write a tight, engineering-first position narrative (about 400 words) on why the TARGET should build their "
-        "governance and intelligence layer on Snowflake. Structure: (1) a punchy TITLE; (2) THESIS in 1-2 sentences; "
-        "(3) exactly 4 MOVES, each a bold headline plus 1-2 sentences, honest about fit; (4) an HONEST BOUNDARY "
-        "paragraph naming what Snowflake is NOT right for; (5) a WHY NOW close. Rules: no marketing fluff, no invented "
-        "facts, use no numbers not in the grounding, and do NOT mention the word Guppi.\n\n")
+    if is_internal:
+        # INTERNAL / for-Guppi deliverable: Guppi may (and should) be named; structure follows the ANGLE.
+        rubric = ("You are Bob, an engineering-first builder for the Guppi platform team. Using ONLY the grounding below, "
+            "author an internal deliverable for the TARGET that fulfills the ANGLE. This is INTERNAL Guppi work: you MAY and SHOULD "
+            "name Guppi and its components. Be concrete and engineering-first; ground every claim in the grounding; no invented "
+            "facts and no numbers not in the grounding; be honest about open questions and risks. Let the ANGLE drive the shape - "
+            "if it asks for a plan, write a phased plan with clear ordered steps and a de-risk gate; otherwise a tight narrative with "
+            "a punchy TITLE, THESIS, the key MOVES, an HONEST BOUNDARY, and a WHY NOW.\n\n")
+    else:
+        # CUSTOMER / external positioning narrative: do NOT mention Guppi (internal tooling stays internal).
+        rubric = ("You are Bob, a narrative builder for a Snowflake healthcare team. Using ONLY the grounding below, "
+            "write a tight, engineering-first position narrative (about 400 words) on why the TARGET should build their "
+            "governance and intelligence layer on Snowflake. Structure: (1) a punchy TITLE; (2) THESIS in 1-2 sentences; "
+            "(3) exactly 4 MOVES, each a bold headline plus 1-2 sentences, honest about fit; (4) an HONEST BOUNDARY "
+            "paragraph naming what Snowflake is NOT right for; (5) a WHY NOW close. Rules: no marketing fluff, no invented "
+            "facts, use no numbers not in the grounding, and do NOT mention the word Guppi.\n\n")
     # RULE-030: when the research came from an isolated swarm, author from the surfaced
     # disagreements too (not just the flattened synthesis). Disconfirmation is NOT re-run here.
     conflicts_block = ("\n\nOPEN DISAGREEMENTS (from isolated swarm research - address the honest tension, do NOT paper over):\n" + conflicts[:3000]) if conflicts.strip() else ""
@@ -1111,11 +1124,11 @@ def run(session, p_research_id, p_target, p_angle):
     nar_content = {"markdown": win_text, "target": target, "winner_model": winner}
     nar_meta = {"winner_model": winner, "run_id": run_id, "bakeoff": results,
         "grounding": {"research_id": p_research_id, "agent": "BOB_AGENT", "bond": True},
-        "no_guppi_mention": True, "built_by": "BOB_EXECUTE", "claim_localization": localization}
+        "no_guppi_mention": (not is_internal), "built_by": "BOB_EXECUTE", "claim_localization": localization}
     try:
         cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, NULL, ?, ?, 'Built', "
             "?, NULL, ?)",
-            params=["Bob: " + target[:70] + " on Snowflake (position)", json.dumps(nar_content), init_id, json.dumps([tag]), json.dumps(nar_meta)]).collect()
+            params=[("Bob: " + target[:70]) if is_internal else ("Bob: " + target[:70] + " on Snowflake (position)"), json.dumps(nar_content), init_id, json.dumps([tag]), json.dumps(nar_meta)]).collect()
         nar_res = str(cr[0][0]) if cr else None
         try:
             nar_id = json.loads(nar_res).get("artifact_id") if nar_res else None
@@ -1411,4 +1424,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.18.0', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.18.1', 'seed apply', FALSE);

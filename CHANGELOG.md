@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.18.1] — 2026-07-21
+
+### Fix — Bob unblocked (malformed model config) + audience-conditional rubric
+
+Bob could not run in-region: `agents/bob.md` declared `model: per-candidate ... judges cross-score`, which the CoCo Task runtime reads as the subagent's own model selection and rejects ("switch to auto"). Separately, `BOB_EXECUTE`'s rubric unconditionally scrubbed the word "Guppi" and framed every output as a customer Snowflake pitch — so Bob could not author internal Guppi deliverables (e.g. a build plan under an E-27 initiative).
+
+- **`agents/bob.md`**: `model:` → `auto`. The cross-judge lives inside `BOB_EXECUTE`, not the agent's model field; RULE-023 is unchanged.
+- **`BOB_EXECUTE` rubric is now audience-conditional**: internal / for-Guppi work (parent `PRODUCT_ID='guppi'`, or an explicit "internal"/"for guppi" angle cue) authors per the ANGLE and names Guppi freely (a phased plan when asked); customer / external keeps the unchanged positioning-narrative rubric **with** the Guppi scrub. The NARRATIVE title and `no_guppi_mention` flag follow the same branch.
+- No change to the bake-off / cross-judge (RULE-023) or to grants.
+
 ## [3.18.0] — 2026-07-21
 
 ### Add — Orchestrator role ladder: GUPPI_BUILDER tier + RULE-034 (least-privilege posture)
