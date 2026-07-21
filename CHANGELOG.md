@@ -2,6 +2,17 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.19.2] — 2026-07-21
+
+### Fix — Seed hygiene (PLAT-D008), lowercase-`bob` retirement, RULE-033 message sync
+
+Three drift closures, no engine behavior change:
+
+- **PLAT-D008a** — `RESOLVE_APP_METRIC` (the viewer's launch-time app-KPI resolver, created live 2026-07-08) was an orphan: live but never in the seed, so a fresh install / re-seed would lack it. Captured its DDL into `03_procs.sql` with `VIEWER`/`CONTRIBUTOR`/`ADMIN` grants.
+- **PLAT-D008b** — the seed's `PUBLISH_ARTIFACT` contributor grant named the 4th arg as `VARIANT`, but the live proc's `P_LAUNCH_SPEC` is `VARCHAR` (scalar JSON surface). The signature mismatch made the `GRANT` a silent no-op. Corrected the grant to the all-`VARCHAR` (7-arg) signature and granted live.
+- **Retire the lowercase `bob` subagent** — `agents/bob.md` is now a deprecation stub. The Task subagent freelanced (web/Workspace tools, no wheel SQL) and drifted (invented artifact ids/types/`CREATE_ARTIFACT` params). The real Bob is the server-side `BOB_EXECUTE` procedure; the stub redirects there. Architecture doc now lives in the `BOB_EXECUTE` header.
+- **RULE-033 message sync** — the live `RULES.MESSAGE` for RULE-033 predated the `NORMALIZE_ARTIFACT_CONTENT` guarantee (shipped in 3.19.0). Reconciled live rules to the seed so the doctrine text matches the shipped mechanism.
+
 ## [3.19.1] — 2026-07-21
 
 ### Fix — Cleaner narrative composition: body-alias leads unlabeled

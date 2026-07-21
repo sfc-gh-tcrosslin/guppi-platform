@@ -530,7 +530,8 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VAR
 -- The 3-arg wrapper (above) still lets contributors submit on the dup-gated path (delegates via EXECUTE AS OWNER).
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR,BOOLEAN) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VARCHAR,BOOLEAN,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
-GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARIANT,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+-- PLAT-D008b: P_LAUNCH_SPEC (4th arg) is VARCHAR (scalar JSON surface), not VARIANT — grant sig must match the live proc or the GRANT no-ops silently.
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,VARIANT,ARRAY) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(VARCHAR,NUMBER,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
@@ -1451,6 +1452,58 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(VARCHAR) TO ROL
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ENSURE_NARRATIVE_HTML(VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 
 -- =============================================================================
+-- RESOLVE_APP_METRIC — launch-time metric resolver for APP artifacts (PLAT-D008a).
+-- Reads metadata:metric_exports off a published APP, applies default_filters +
+-- caller overrides to the metric's query_template, runs it EXECUTE AS OWNER and
+-- returns the scalar value (+ unit/is_simulated/resolved_query). The viewer calls
+-- this to render live app KPIs. Was created live 2026-07-08 but never seeded — this
+-- entry ends that drift so it survives a fresh install / re-seed.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.RESOLVE_APP_METRIC(
+  P_APP_ID VARCHAR, P_METRIC_NAME VARCHAR, P_FILTER_OVERRIDES VARIANT)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+def run(session, app_id, metric_name, overrides):
+    r = session.sql("SELECT metadata:metric_exports AS me FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE id = ? AND superseded_by IS NULL", params=[app_id]).collect()
+    if not r or r[0]["ME"] is None:
+        return {"error": "app or metric_exports not found", "app_id": app_id}
+    me = r[0]["ME"]
+    me = json.loads(me) if isinstance(me, str) else me
+    metric = next((x for x in me if x.get("name") == metric_name), None)
+    if metric is None:
+        return {"error": "metric not found", "app_id": app_id, "metric": metric_name,
+                "available": [x.get("name") for x in me]}
+    filters = dict(metric.get("default_filters") or {})
+    ov = overrides
+    if isinstance(ov, str):
+        ov = json.loads(ov) if ov.strip() else {}
+    if isinstance(ov, dict):
+        filters.update(ov)
+    q = metric.get("query_template", "")
+    for k, v in filters.items():
+        q = q.replace("{{" + str(k) + "}}", str(v))
+    rows = session.sql(q).collect()
+    value = rows[0][0] if rows and len(rows[0]) > 0 else None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        pass
+    return {"app_id": app_id, "metric": metric_name, "value": value,
+            "unit": metric.get("unit"), "is_simulated": metric.get("is_simulated"),
+            "filters": filters, "resolved_query": q}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESOLVE_APP_METRIC(VARCHAR,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_VIEWER;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESOLVE_APP_METRIC(VARCHAR,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESOLVE_APP_METRIC(VARCHAR,VARCHAR,VARIANT) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
 -- PUBLISH_PLUGIN_VERSION — the governed, regression-proof stamp path for
 -- PLUGIN_VERSION (the rule in 02_rules.sql describes this gate). Direct DML on
 -- PLUGIN_VERSION stays revoked; this EXECUTE-AS-OWNER proc is the only writer.
@@ -1504,4 +1557,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.1', 'seed apply', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.2', 'PLAT-D008 seed hygiene: seed RESOLVE_APP_METRIC + fix PUBLISH_ARTIFACT grant sig; retire lowercase bob subagent; sync RULE-033 message', FALSE);
