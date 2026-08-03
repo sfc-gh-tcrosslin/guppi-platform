@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.2 — Engine Seed 03: Procedures
+-- guppi-platform v3.20.0 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -556,6 +556,32 @@ import json
 # Canonical renderable set. Extend here (or migrate to a TYPE_REGISTRY.RENDERABLE flag) to render more types.
 RENDERABLE = {"NARRATIVE"}
 _ALIASES = ["markdown", "body", "narrative", "synthesis", "description", "summary"]
+_NON_BODY_META_KEYS = {"summary", "audience"}
+def _repair_markdown(s):
+    if not isinstance(s, str):
+        return ""
+    t = s.replace("\r\n", "\n").replace("\r", "\n")
+    t = t.replace("\\|", "|")
+    t = t.replace("  ## ", "\n\n## ")
+    t = t.replace("  ---  ", "\n\n---\n\n")
+    t = t.replace(" --- ", "\n\n---\n\n")
+    t = t.replace("  - ", "\n- ")
+    t = t.replace("|  ## ", "|\n\n## ")
+    return t.strip()
+def _validate_narrative_md(md):
+    issues = []
+    if not isinstance(md, str) or not md.strip():
+        return ["body_md missing or empty"]
+    body = md.strip()
+    if len(body) > 600 and "\n" not in body:
+        issues.append("body_md is a large single line")
+    if "\\|" in body:
+        issues.append("body_md still contains escaped table pipes")
+    if body.count("|") >= 6 and "\n|" not in body:
+        issues.append("table-like content appears collapsed onto one line")
+    if "## " in body and "\n## " not in body and not body.startswith("## "):
+        issues.append("heading markers appear inline instead of on separate lines")
+    return issues
 def _title(k):
     return k.replace("_", " ").strip().title()
 def norm(content, p_type):
@@ -567,7 +593,12 @@ def norm(content, p_type):
         return content
     bm = content.get("body_md")
     if isinstance(bm, str) and bm.strip():
-        return content
+        out = dict(content)
+        out["body_md"] = _repair_markdown(bm)
+        issues = _validate_narrative_md(out["body_md"])
+        if issues:
+            raise ValueError("; ".join(issues))
+        return out
     out = dict(content)
     # Promote the single body-alias (by _ALIASES priority) as the UNLABELED lead; append every
     # OTHER key as a '## Section'. So the prose leads clean and metadata/supplements trail; a
@@ -582,7 +613,7 @@ def norm(content, p_type):
     if lead_key is not None:
         parts.append(content[lead_key].strip())
     for k, v in content.items():
-        if k == lead_key or k == "body_md":
+        if k == lead_key or k == "body_md" or k in _NON_BODY_META_KEYS:
             continue
         if isinstance(v, str) and v.strip():
             seg = v
@@ -591,12 +622,83 @@ def norm(content, p_type):
         else:
             continue
         parts.append("## " + _title(k) + "\n\n" + seg)
-    out["body_md"] = "\n\n".join(parts)
+    out["body_md"] = _repair_markdown("\n\n".join(parts))
+    issues = _validate_narrative_md(out["body_md"])
+    if issues:
+        raise ValueError("; ".join(issues))
     return out
 $$;
 GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(VARIANT,VARCHAR) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(VARIANT,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(VARIANT,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- =============================================================================
+-- VALIDATE_NARRATIVE_CONTENT — the governed narrative-structure gate (E-014).
+-- Reads NARRATIVE_TEMPLATE (governance-as-data), validates section-keyed content against
+-- the declared template, and composes a canonical body_md in ORD order (headings from the
+-- template). HARD-REJECTS a missing required section or an unknown section (no drift).
+-- Pure UDFs cannot read tables, so this is a proc (session-backed). Returns
+-- {ok, content, template, template_version} on success, or {error, ...} on violation.
+-- Called by CREATE_ARTIFACT's NARRATIVE branch whenever content declares a template;
+-- CREATE_NARRATIVE / BOB_EXECUTE always declare one, so the paved roads are always enforced.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.VALIDATE_NARRATIVE_CONTENT(P_CONTENT VARCHAR, P_TEMPLATE VARCHAR DEFAULT NULL)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+# Non-section keys allowed alongside the template sections (never treated as drift).
+RESERVED = {"template", "template_version", "audience", "title", "body_md"}
+def run(session, p_content, p_template):
+    try:
+        content = json.loads(p_content) if isinstance(p_content, str) else (p_content or {})
+    except Exception as e:
+        return {"error": "narrative content is not valid JSON", "detail": str(e)}
+    if not isinstance(content, dict):
+        return {"error": "narrative content must be a JSON object of sections"}
+    template = (p_template or content.get("template") or "default")
+    template = str(template).strip() or "default"
+    rows = session.sql(
+        "SELECT SECTION_KEY, ORD, REQUIRED, HEADING, TEMPLATE_VERSION "
+        "FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE WHERE TEMPLATE = ? ORDER BY ORD",
+        params=[template]
+    ).collect()
+    if not rows:
+        allowed = [r["TEMPLATE"] for r in session.sql("SELECT DISTINCT TEMPLATE FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE ORDER BY TEMPLATE").collect()]
+        return {"error": "unknown narrative template", "template": template, "allowed": allowed}
+    version = rows[0]["TEMPLATE_VERSION"]
+    valid_keys = {r["SECTION_KEY"] for r in rows}
+    unknown = [k for k in content.keys() if k not in valid_keys and k not in RESERVED]
+    if unknown:
+        return {"error": "unknown narrative sections (not in template)", "template": template,
+                "unknown": sorted(unknown), "allowed": sorted(valid_keys)}
+    missing = []
+    for r in rows:
+        if r["REQUIRED"]:
+            v = content.get(r["SECTION_KEY"])
+            if not (isinstance(v, str) and v.strip()):
+                missing.append(r["SECTION_KEY"])
+    if missing:
+        return {"error": "missing required narrative sections", "template": template, "missing": missing,
+                "hint": "provide non-empty markdown for every required section"}
+    parts = []
+    for r in rows:
+        v = content.get(r["SECTION_KEY"])
+        if isinstance(v, str) and v.strip():
+            parts.append("## " + r["HEADING"] + "\n\n" + v.strip())
+    out = dict(content)
+    out["template"] = template
+    out["template_version"] = version
+    out["body_md"] = "\n\n".join(parts)
+    return {"ok": True, "content": out, "template": template, "template_version": version}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.VALIDATE_NARRATIVE_CONTENT(VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.VALIDATE_NARRATIVE_CONTENT(VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
 -- CREATE_ARTIFACT — the single gated write path (RULE-029): the ONLY proc that INSERTs into ARTIFACTS.
@@ -717,15 +819,31 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     except Exception as e:
         return {"error": "P_CONTENT is not valid JSON", "detail": str(e),
                 "hint": "pass a JSON object for structured content, or plain text/markdown (stored as CONTENT.body_md)"}
-    # Canonical shape (RULE-033): renderable types get a guaranteed CONTENT.body_md via the ONE
-    # shared normalizer (same UDF UPDATE_OWN_ARTIFACT + the backfill use). Born-canonical, every producer.
-    try:
-        _nr = session.sql("SELECT TO_JSON(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(PARSE_JSON(?), ?)) AS J",
-                          params=[json.dumps(content), t]).collect()
-        if _nr and _nr[0]["J"]:
-            content = json.loads(_nr[0]["J"])
-    except Exception:
-        pass
+    # Canonical shape (RULE-033 + E-014): NARRATIVE with a declared template (content.template)
+    # is validated + composed against NARRATIVE_TEMPLATE -- missing/unknown section => HARD REJECT
+    # (no drift). Templateless narratives (legacy prose, or launch-pointer NARRATIVEs from
+    # PUBLISH_ARTIFACT) fall back to the body_md normalizer and are exempt from the conformance
+    # tripwire (go-forward: only template-stamped narratives are checked).
+    if t == "NARRATIVE" and isinstance(content, dict) and content.get("template"):
+        try:
+            vr = session.sql("CALL GUPPIWHEEL.PUBLIC.VALIDATE_NARRATIVE_CONTENT(?, ?)",
+                             params=[json.dumps(content), str(content.get("template"))]).collect()
+            v = json.loads(str(vr[0][0])) if vr and vr[0][0] is not None else {}
+        except Exception as e:
+            return {"error": "narrative template validation failed", "detail": str(e)}
+        if isinstance(v, dict) and v.get("error"):
+            return v
+        if isinstance(v, dict) and isinstance(v.get("content"), dict):
+            content = v["content"]
+    else:
+        try:
+            _nr = session.sql("SELECT TO_JSON(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(PARSE_JSON(?), ?)) AS J",
+                              params=[json.dumps(content), t]).collect()
+            if _nr and _nr[0]["J"]:
+                content = json.loads(_nr[0]["J"])
+        except Exception as e:
+            return {"error": "invalid narrative content", "detail": str(e),
+                    "hint": "NARRATIVE content must normalize to multiline body_md with renderable markdown structure"}
     try:
         meta = _meta_from(p_metadata)
     except Exception as e:
@@ -825,6 +943,92 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- =============================================================================
+-- CREATE_NARRATIVE / UPDATE_NARRATIVE — the section-keyed paved road (E-014).
+-- Authors (CoWork, Bob, humans) pass sections keyed by the template's section_key;
+-- these delegate to the single write path (CREATE_ARTIFACT / UPDATE_OWN_ARTIFACT), which
+-- enforces the template (hard-reject) via VALIDATE_NARRATIVE_CONTENT. Every narrative born
+-- through here is template-conformant and stamped -- no drift.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_NARRATIVE(
+  P_TEMPLATE VARCHAR, P_TITLE VARCHAR, P_SECTIONS VARCHAR,
+  P_PARENT_ID VARCHAR DEFAULT NULL, P_PRODUCT VARCHAR DEFAULT NULL, P_METADATA VARCHAR DEFAULT NULL
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+def run(session, p_template, p_title, p_sections, p_parent_id, p_product, p_metadata):
+    try:
+        sections = json.loads(p_sections) if isinstance(p_sections, str) else (p_sections or {})
+    except Exception as e:
+        return {"error": "P_SECTIONS is not valid JSON", "detail": str(e)}
+    if not isinstance(sections, dict):
+        return {"error": "P_SECTIONS must be a JSON object of section_key -> markdown"}
+    content = dict(sections)
+    content["template"] = (p_template or content.get("template") or "default")
+    # Single gate: CREATE_ARTIFACT validates against the template (hard-reject) + composes body_md.
+    res = session.sql(
+        "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, ?, ?, ?, 'Built', NULL, NULL, ?)",
+        params=[p_title, p_product, json.dumps(content), p_parent_id, p_metadata]
+    ).collect()
+    out = res[0][0] if res else None
+    try:
+        return json.loads(str(out)) if out is not None else {"error": "no response from CREATE_ARTIFACT"}
+    except Exception:
+        return {"result": str(out)}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_NARRATIVE(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_NARRATIVE(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_NARRATIVE(
+  P_ARTIFACT_ID VARCHAR, P_SECTIONS VARCHAR, P_TEMPLATE VARCHAR DEFAULT NULL
+)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+import json
+def run(session, p_artifact_id, p_sections, p_template):
+    row = session.sql(
+        "SELECT TYPE, CONTENT:template::string AS TPL FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+        "WHERE ID = ? AND SUPERSEDED_BY IS NULL", params=[p_artifact_id]
+    ).collect()
+    if not row:
+        return {"error": "artifact not found (or superseded)", "id": p_artifact_id}
+    if row[0]["TYPE"] != "NARRATIVE":
+        return {"error": "not a narrative", "id": p_artifact_id, "type": row[0]["TYPE"]}
+    template = (p_template or row[0]["TPL"] or "default")
+    try:
+        sections = json.loads(p_sections) if isinstance(p_sections, str) else (p_sections or {})
+    except Exception as e:
+        return {"error": "P_SECTIONS is not valid JSON", "detail": str(e)}
+    if not isinstance(sections, dict):
+        return {"error": "P_SECTIONS must be a JSON object of section_key -> markdown"}
+    content = dict(sections)
+    content["template"] = template
+    vr = session.sql("CALL GUPPIWHEEL.PUBLIC.VALIDATE_NARRATIVE_CONTENT(?, ?)",
+                     params=[json.dumps(content), template]).collect()
+    v = json.loads(str(vr[0][0])) if vr and vr[0][0] is not None else {}
+    if v.get("error"):
+        return v
+    newc = v.get("content", content)
+    ur = session.sql("CALL GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(?, NULL, PARSE_JSON(?), NULL)",
+                     params=[p_artifact_id, json.dumps(newc)]).collect()
+    return {"updated": p_artifact_id, "template": template, "result": (str(ur[0][0]) if ur else None)}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_NARRATIVE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_NARRATIVE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
 -- VERIFY_CHAIN — INIT-75 Thread A tamper audit (v3: structural gate + informational content).
@@ -984,14 +1188,16 @@ $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PROPOSE_CORRECTION(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
--- BOB_EXECUTE — Bob, the Building-stage agent (INIT-36). Takes a RESEARCH artifact,
--- gathers grounding (research + Guppi + Bond + BOB_AGENT web brief), authors the same
--- hypothetical NARRATIVE across all enabled MODEL_CATALOG models, then runs a
--- CROSS-JUDGE panel (every candidate scored by every OTHER model — no self-judging,
--- RULE-023), writes one in-wheel AUDIT per candidate, and writes the highest-trust
--- winner as a NARRATIVE (Built) with full provenance. v1 stops at the NARRATIVE.
+-- BOB_EXECUTE — Bob, the Building-stage agent (INIT-36 / E-014). Takes a RESEARCH artifact,
+-- gathers grounding (research + Guppi + Bond + BOB_AGENT web brief), authors a SECTION-KEYED
+-- NARRATIVE to a governed NARRATIVE_TEMPLATE (rubric generated from the template, not hardcoded),
+-- default single Sonnet-class writer (MODEL_CATALOG ROLE-based; opt-in P_BAKEOFF for the full
+-- multi-model bake-off), cross-judges (independent models, RULE-023), conform-or-repair against
+-- the template gate, and writes the winner via CREATE_NARRATIVE (template-enforced, no drift).
+-- Two overloads: 5-arg (template + bakeoff knobs) + 3-arg stub (CoWork/legacy: auto-template,
+-- single-writer). Distinct arities so they coexist (defaults collapse into one proc in Snowflake).
 -- =============================================================================
-CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(P_RESEARCH_ID VARCHAR, P_TARGET VARCHAR DEFAULT NULL, P_ANGLE VARCHAR DEFAULT NULL)
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(P_RESEARCH_ID VARCHAR, P_TARGET VARCHAR, P_ANGLE VARCHAR, P_TEMPLATE VARCHAR, P_BAKEOFF BOOLEAN)
 RETURNS VARIANT
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
@@ -1013,8 +1219,6 @@ def _agent_text(resp):
     return resp
 
 def _parse_json(s):
-    # Handles bare JSON, ```json fences, and double-JSON-encoded strings (AI_COMPLETE
-    # returns JSON-valued completions as an encoded string -> unwrap layers).
     t = s
     for _ in range(3):
         if isinstance(t, dict):
@@ -1039,8 +1243,7 @@ def _parse_json(s):
         if isinstance(v, dict):
             return v
         if isinstance(v, str):
-            t = v
-            continue
+            t = v; continue
         return None
     return None
 
@@ -1048,18 +1251,29 @@ def _ai(session, model, prompt):
     r = session.sql("SELECT AI_COMPLETE('" + model + "', ?) AS R", params=[prompt]).collect()
     return str(r[0]["R"]) if r and r[0]["R"] is not None else None
 
-def run(session, p_research_id, p_target, p_angle):
+def run(session, p_research_id, p_target, p_angle, p_template, p_bakeoff):
+    p_bakeoff = bool(p_bakeoff)
     rows = session.sql(
         "SELECT TITLE, PARENT_ID, PRODUCT_ID, COALESCE(CONTENT:synthesis::string, TO_JSON(CONTENT)) AS SYN, CONTENT:conflicts::string AS CONFLICTS "
         "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[p_research_id]).collect()
     if not rows:
         return {"error": "research not found", "id": p_research_id}
     init_id = rows[0]["PARENT_ID"]; synthesis = rows[0]["SYN"] or ""
-    conflicts = rows[0]["CONFLICTS"] or ""
+    conflicts = rows[0]["CONFLICTS"] or ""; product_id = rows[0]["PRODUCT_ID"]
     target = p_target or rows[0]["TITLE"]; angle = p_angle or ""
-    # Audience: internal (Guppi-facing) if the artifact's product is guppi OR the angle says so;
-    # else customer/external (default). Customer mode keeps the Guppi scrub; internal names Guppi freely.
-    is_internal = (str(rows[0]["PRODUCT_ID"] or "").lower() == "guppi") or ("internal" in (angle or "").lower()) or ("for guppi" in (angle or "").lower())
+    is_internal = (str(product_id or "").lower() == "guppi") or ("internal" in (angle or "").lower()) or ("for guppi" in (angle or "").lower())
+
+    # Governed structure (E-014). Default by audience; overridable via P_TEMPLATE. Guard the
+    # Snowpark None->'None' bind: treat blank/'none'/'null' as unset.
+    if isinstance(p_template, str) and p_template.strip().lower() in ("", "none", "null"):
+        p_template = None
+    template = (p_template or ("internal_plan" if is_internal else "position"))
+    template = str(template).strip() or ("internal_plan" if is_internal else "position")
+    trows = session.sql("SELECT SECTION_KEY, HEADING, HINT FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE WHERE TEMPLATE = ? ORDER BY ORD", params=[template]).collect()
+    if not trows:
+        return {"error": "unknown narrative template for Bob", "template": template}
+    section_keys = [r["SECTION_KEY"] for r in trows]
+    spec_lines = "\n".join(["- " + r["SECTION_KEY"] + " (" + r["HEADING"] + "): " + (r["HINT"] or "") for r in trows])
 
     gup = ""
     if init_id:
@@ -1081,57 +1295,67 @@ def run(session, p_research_id, p_target, p_angle):
     except Exception as e:
         brief = "(grounding agent unavailable: " + str(e)[:200] + ")"
 
-    if is_internal:
-        # INTERNAL / for-Guppi deliverable: Guppi may (and should) be named; structure follows the ANGLE.
-        rubric = ("You are Bob, an engineering-first builder for the Guppi platform team. Using ONLY the grounding below, "
-            "author an internal deliverable for the TARGET that fulfills the ANGLE. This is INTERNAL Guppi work: you MAY and SHOULD "
-            "name Guppi and its components. Be concrete and engineering-first; ground every claim in the grounding; no invented "
-            "facts and no numbers not in the grounding; be honest about open questions and risks. Let the ANGLE drive the shape - "
-            "if it asks for a plan, write a phased plan with clear ordered steps and a de-risk gate; otherwise a tight narrative with "
-            "a punchy TITLE, THESIS, the key MOVES, an HONEST BOUNDARY, and a WHY NOW.\n\n")
-    else:
-        # CUSTOMER / external positioning narrative: do NOT mention Guppi (internal tooling stays internal).
-        rubric = ("You are Bob, a narrative builder for a Snowflake healthcare team. Using ONLY the grounding below, "
-            "write a tight, engineering-first position narrative (about 400 words) on why the TARGET should build their "
-            "governance and intelligence layer on Snowflake. Structure: (1) a punchy TITLE; (2) THESIS in 1-2 sentences; "
-            "(3) exactly 4 MOVES, each a bold headline plus 1-2 sentences, honest about fit; (4) an HONEST BOUNDARY "
-            "paragraph naming what Snowflake is NOT right for; (5) a WHY NOW close. Rules: no marketing fluff, no invented "
-            "facts, use no numbers not in the grounding, and do NOT mention the word Guppi.\n\n")
-    # RULE-030: when the research came from an isolated swarm, author from the surfaced
-    # disagreements too (not just the flattened synthesis). Disconfirmation is NOT re-run here.
+    guppi_rule = ("This is INTERNAL Guppi work: you MAY and SHOULD name Guppi and its components."
+                  if is_internal else "Do NOT mention the word Guppi (internal tooling stays internal).")
     conflicts_block = ("\n\nOPEN DISAGREEMENTS (from isolated swarm research - address the honest tension, do NOT paper over):\n" + conflicts[:3000]) if conflicts.strip() else ""
     grounding = ("TARGET: " + target + "\nANGLE: " + angle + "\n\nRESEARCH SYNTHESIS:\n" + synthesis[:8000] + conflicts_block +
         "\n\nGUPPI CONTEXT:\n" + gup + "\n\nBOND:\n" + bond + "\n\nWEB GROUNDING BRIEF:\n" + brief[:4000])
-    prompt = rubric + "GROUNDING:\n" + grounding
+
+    def author_prompt(extra=""):
+        return ("You are Bob, an engineering-first narrative builder for a Snowflake healthcare team. "
+            "Using ONLY the grounding below, author a narrative for the TARGET that fulfills the ANGLE. "
+            + guppi_rule + " Ground every claim in the grounding; no invented facts; use no numbers not in the grounding; be honest about limits.\n\n"
+            "Return ONLY a JSON object (no markdown fences) with EXACTLY these keys, each a markdown string:\n"
+            + spec_lines + "\n\nEvery listed section is REQUIRED and must be non-empty markdown. Do not add other keys.\n"
+            + extra + "\nGROUNDING:\n" + grounding)
 
     ts = session.sql("SELECT TO_VARCHAR(CURRENT_TIMESTAMP(),'YYYYMMDDHH24MISS') AS T").collect()[0]["T"]
     run_id = "BOB-" + p_research_id.replace("RES-", "").replace("-ROCKY", "") + "-" + ts
-    models = [x["MODEL_NAME"] for x in session.sql("SELECT MODEL_NAME FROM GUPPIWHEEL.PUBLIC.MODEL_CATALOG WHERE ENABLED ORDER BY MODEL_NAME").collect()]
+
+    pool = [x["MODEL_NAME"] for x in session.sql("SELECT MODEL_NAME FROM GUPPIWHEEL.PUBLIC.MODEL_CATALOG WHERE ENABLED AND ROLE IN ('authoring','both') ORDER BY MODEL_NAME").collect()]
+    judges = [x["MODEL_NAME"] for x in session.sql("SELECT MODEL_NAME FROM GUPPIWHEEL.PUBLIC.MODEL_CATALOG WHERE ENABLED AND ROLE IN ('judge','both') ORDER BY MODEL_NAME").collect()]
+    if not pool:
+        pool = [x["MODEL_NAME"] for x in session.sql("SELECT MODEL_NAME FROM GUPPIWHEEL.PUBLIC.MODEL_CATALOG WHERE ENABLED ORDER BY MODEL_NAME").collect()]
+    # Default single writer = Sonnet-class (RULE-023 governed; not Opus). Opt-in bake-off = whole pool.
+    primary = next((m for m in pool if "sonnet" in m.lower()), (pool[0] if pool else None))
+    writers = pool if p_bakeoff else ([primary] if primary else pool[:1])
+
+    def parse_sections(txt):
+        obj = _parse_json(txt)
+        if not isinstance(obj, dict):
+            return None
+        secs = {k: obj.get(k) for k in section_keys if isinstance(obj.get(k), str) and obj.get(k).strip()}
+        return secs or None
+
+    def preview(secs):
+        return "\n\n".join(["## " + r["HEADING"] + "\n\n" + secs.get(r["SECTION_KEY"], "") for r in trows if secs.get(r["SECTION_KEY"])])
 
     candidates = {}
-    for m in models:
+    for m in writers:
         try:
-            txt = _ai(session, m, prompt)
+            txt = _ai(session, m, author_prompt())
         except Exception:
             txt = None
-        if txt:
-            candidates[m] = txt
+        secs = parse_sections(txt) if txt else None
+        if secs:
+            candidates[m] = secs
             session.sql("INSERT INTO GUPPIWHEEL.PUBLIC.BOB_BAKEOFF_CANDIDATES (RUN_ID,RESEARCH_ID,MODEL_NAME,NARRATIVE) SELECT ?,?,?,?",
-                        params=[run_id, p_research_id, m, txt]).collect()
+                        params=[run_id, p_research_id, m, json.dumps(secs)]).collect()
     if not candidates:
-        return {"error": "no candidates produced", "run_id": run_id}
+        return {"error": "no candidates produced", "run_id": run_id, "template": template}
 
     judge_rubric = ("You are TARS, an INDEPENDENT trust auditor. Score the NARRATIVE for the TARGET on trust using ONLY "
         "the GROUNDING as ground truth. Penalize claims beyond the grounding, a missing honest boundary, vagueness, or "
         "hallucination. Reward grounded specificity, honesty about weak fit, and clear structure. Return ONLY a JSON "
         "object: {\"trust\": <0..1 float>, \"c_signals\": <int>, \"d_signals\": <int>, \"notes\": \"<one sentence>\"}.\n\n")
     scores = {}
-    for author, narrative in candidates.items():
+    for author, secs in candidates.items():
         scores[author] = []
-        for judge in models:
+        pv = preview(secs)
+        for judge in judges:
             if judge == author:
                 continue
-            jp = judge_rubric + "GROUNDING:\n" + grounding[:8000] + "\n\nNARRATIVE (author hidden):\n" + narrative[:6000]
+            jp = judge_rubric + "GROUNDING:\n" + grounding[:8000] + "\n\nNARRATIVE (author hidden):\n" + pv[:6000]
             try:
                 obj = _parse_json(_ai(session, judge, jp))
             except Exception:
@@ -1157,26 +1381,38 @@ def run(session, p_research_id, p_target, p_angle):
             "judges": [{"model": j["judge"], "trust": j["trust"]} for j in js]}
         aid = ("AUDIT-" + run_id + "-" + author.replace("-", "").replace(".", ""))[:60]
         try:
-            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, ?, NULL, 'Built', "
-                "'[\"tars\",\"bob\",\"bakeoff\"]', ?, ?)",
+            session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('AUDIT', ?, NULL, ?, NULL, 'Built', '[\"tars\",\"bob\",\"bakeoff\"]', ?, ?)",
                 params=["TARS bake-off: " + author + " on " + target[:50], json.dumps(content), aid, json.dumps(meta)]).collect()
             audit_ids.append(aid)
         except Exception:
             pass
 
     results.sort(key=lambda x: (-x["avg_trust"], x["model"]))
-    winner = results[0]["model"]; win_text = candidates[winner]
+    winner = results[0]["model"]; win_secs = candidates[winner]
 
-    # Error-localization (ArcticSwarm "Agent GPA" style, ADVISORY): decompose the WINNER
-    # into atomic claims and label each grounded/unsupported/contradicted vs the grounding.
-    # RULE-023: judged by an INDEPENDENT model (never the author). Flag only - no rewrite,
-    # so we surface weak claims to a human without laundering the text.
-    loc_judge = next((m for m in models if m != winner), winner)
+    # Conform-or-repair: winner must pass the template gate. One repair retry, else fail loud.
+    def validate(secs):
+        c = dict(secs); c["template"] = template
+        vr = session.sql("CALL GUPPIWHEEL.PUBLIC.VALIDATE_NARRATIVE_CONTENT(?, ?)", params=[json.dumps(c), template]).collect()
+        return json.loads(str(vr[0][0])) if vr and vr[0][0] is not None else {}
+    v = validate(win_secs)
+    if v.get("error"):
+        try:
+            fix = _ai(session, winner, author_prompt("PRIOR ATTEMPT FAILED VALIDATION: " + json.dumps(v) + ". Return corrected JSON with ALL required sections non-empty.\n"))
+            fixed = parse_sections(fix)
+            if fixed:
+                win_secs = fixed; v = validate(win_secs)
+        except Exception:
+            pass
+    if v.get("error"):
+        return {"error": "winner failed template validation after repair", "detail": v, "run_id": run_id, "template": template, "results": results}
+
+    loc_judge = next((m for m in judges if m != winner), (judges[0] if judges else winner))
+    win_preview = preview(win_secs)
     loc_prompt = ("You are an INDEPENDENT claim auditor. Decompose the NARRATIVE into atomic factual claims. "
-        "Judge EACH claim ONLY against the GROUNDING: 'grounded' = directly supported by grounding; 'unsupported' = "
-        "not present in grounding; 'contradicted' = conflicts with grounding. Return ONLY a raw JSON array, each "
+        "Judge EACH claim ONLY against the GROUNDING: 'grounded'/'unsupported'/'contradicted'. Return ONLY a raw JSON array, each "
         "{\"claim\":\"<short quote>\",\"verdict\":\"grounded|unsupported|contradicted\",\"evidence\":\"<grounding quote or none>\"}.\n\n"
-        "GROUNDING:\n" + grounding[:8000] + "\n\nNARRATIVE:\n" + win_text[:6000])
+        "GROUNDING:\n" + grounding[:8000] + "\n\nNARRATIVE:\n" + win_preview[:6000])
     claims = []
     try:
         lt = _ai(session, loc_judge, loc_prompt) or ""
@@ -1188,18 +1424,17 @@ def run(session, p_research_id, p_target, p_angle):
     claims = [c for c in claims if isinstance(c, dict)][:40]
     unsupported = sum(1 for c in claims if str(c.get("verdict", "")).lower() == "unsupported")
     contradicted = sum(1 for c in claims if str(c.get("verdict", "")).lower() == "contradicted")
-    localization = {"judge_model": loc_judge, "n_claims": len(claims),
-        "n_unsupported": unsupported, "n_contradicted": contradicted, "claims": claims}
+    localization = {"judge_model": loc_judge, "n_claims": len(claims), "n_unsupported": unsupported, "n_contradicted": contradicted, "claims": claims}
 
-    tag = (target.split()[0].lower() if target else "bob")
-    nar_content = {"body_md": win_text, "target": target, "winner_model": winner}
+    mode = "bakeoff" if p_bakeoff else "single-writer"
     nar_meta = {"winner_model": winner, "run_id": run_id, "bakeoff": results,
         "grounding": {"research_id": p_research_id, "agent": "BOB_AGENT", "bond": True},
-        "no_guppi_mention": (not is_internal), "built_by": "BOB_EXECUTE", "claim_localization": localization}
+        "no_guppi_mention": (not is_internal), "built_by": "BOB_EXECUTE", "template": template,
+        "mode": mode, "claim_localization": localization}
+    title = ("Bob: " + target[:70]) if is_internal else ("Bob: " + target[:70] + " on Snowflake (position)")
     try:
-        cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('NARRATIVE', ?, NULL, ?, ?, 'Built', "
-            "?, NULL, ?)",
-            params=[("Bob: " + target[:70]) if is_internal else ("Bob: " + target[:70] + " on Snowflake (position)"), json.dumps(nar_content), init_id, json.dumps([tag]), json.dumps(nar_meta)]).collect()
+        cr = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_NARRATIVE(?, ?, ?, ?, ?, ?)",
+            params=[template, title, json.dumps(win_secs), init_id, product_id, json.dumps(nar_meta)]).collect()
         nar_res = str(cr[0][0]) if cr else None
         try:
             nar_id = json.loads(nar_res).get("artifact_id") if nar_res else None
@@ -1208,8 +1443,27 @@ def run(session, p_research_id, p_target, p_angle):
     except Exception as e:
         return {"error": "winner write failed: " + str(e)[:300], "run_id": run_id, "results": results}
 
-    return {"run_id": run_id, "winner_model": winner, "results": results, "narrative_id": nar_id, "audit_ids": audit_ids,
+    return {"run_id": run_id, "winner_model": winner, "template": template, "mode": mode, "results": results,
+        "narrative_id": nar_id, "audit_ids": audit_ids,
         "localization": {"judge": loc_judge, "n_claims": len(claims), "unsupported": unsupported, "contradicted": contradicted}}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR,VARCHAR,BOOLEAN) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR,VARCHAR,BOOLEAN) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- 3-arg stub (CoWork/legacy paved road): auto-template + single-writer. Passes '' (not None) for
+-- template to dodge the Snowpark None->'None' bind; distinct arity from the 5-arg so both coexist.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(P_RESEARCH_ID VARCHAR, P_TARGET VARCHAR, P_ANGLE VARCHAR)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS
+$$
+def run(session, p_research_id, p_target, p_angle):
+    r = session.sql("CALL GUPPIWHEEL.PUBLIC.BOB_EXECUTE(?, ?, ?, '', FALSE)", params=[p_research_id, p_target, p_angle]).collect()
+    return r[0][0] if r else None
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_EXECUTE(VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- Bob is EXECUTE AS OWNER; contributors invoke the build step via the governed proc (RULE-028)
@@ -1314,11 +1568,39 @@ def _inline(t):
     t = re.sub(r'`([^`]+)`', r'<code>\1</code>', t)
     return t
 
+def _is_table_sep(line):
+    s = line.strip()
+    if not s.startswith("|"):
+        return False
+    cells = [c.strip() for c in s.strip("|").split("|")]
+    return len(cells) > 0 and all(re.match(r'^:?-{3,}:?$', c or '') for c in cells)
+
+def _table_html(lines):
+    header = [c.strip() for c in lines[0].strip().strip("|").split("|")]
+    rows = []
+    for raw in lines[2:]:
+        cells = [c.strip() for c in raw.strip().strip("|").split("|")]
+        while len(cells) < len(header):
+            cells.append("")
+        rows.append(cells[:len(header)])
+    out = ["<table><thead><tr>"]
+    for h in header:
+        out.append("<th>" + _inline(_esc(h)) + "</th>")
+    out.append("</tr></thead><tbody>")
+    for row in rows:
+        out.append("<tr>")
+        for cell in row:
+            out.append("<td>" + _inline(_esc(cell)) + "</td>")
+        out.append("</tr>")
+    out.append("</tbody></table>")
+    return "".join(out)
+
 def _md(md):
     lines = (md or "").split("\n")
     out = []
     mode = None
     para = []
+    i = 0
     def flush_para():
         if para:
             out.append("<p>" + _inline(" ".join(para)) + "</p>")
@@ -1328,7 +1610,8 @@ def _md(md):
         if mode == 'ul': out.append("</ul>")
         elif mode == 'ol': out.append("</ol>")
         mode = None
-    for raw in lines:
+    while i < len(lines):
+        raw = lines[i]
         line = raw.rstrip()
         if line.strip().startswith("```"):
             flush_para(); close_list()
@@ -1336,31 +1619,47 @@ def _md(md):
                 out.append("</code></pre>"); mode = None
             else:
                 out.append("<pre><code>"); mode = 'pre'
+            i += 1
             continue
         if mode == 'pre':
-            out.append(_esc(raw)); continue
+            out.append(_esc(raw)); i += 1; continue
         s = line.strip()
         if not s:
-            flush_para(); close_list(); continue
+            flush_para(); close_list(); i += 1; continue
+        if i + 1 < len(lines) and s.startswith("|") and _is_table_sep(lines[i+1]):
+            flush_para(); close_list()
+            tbl = [line, lines[i+1].rstrip()]
+            j = i + 2
+            while j < len(lines):
+                nxt = lines[j].rstrip()
+                if nxt.strip().startswith("|"):
+                    tbl.append(nxt)
+                    j += 1
+                    continue
+                break
+            out.append(_table_html(tbl))
+            i = j
+            continue
         m = re.match(r'^(#{1,6})\s+(.*)$', s)
         if m:
             flush_para(); close_list()
             lvl = min(len(m.group(1)), 4)
-            out.append("<h%d>%s</h%d>" % (lvl, _inline(_esc(m.group(2))), lvl)); continue
+            out.append("<h%d>%s</h%d>" % (lvl, _inline(_esc(m.group(2))), lvl)); i += 1; continue
         if re.match(r'^(---+|\*\*\*+)$', s):
-            flush_para(); close_list(); out.append("<hr>"); continue
+            flush_para(); close_list(); out.append("<hr>"); i += 1; continue
         mb = re.match(r'^[-*]\s+(.*)$', s)
         if mb:
             flush_para()
             if mode != 'ul': close_list(); out.append("<ul>"); mode = 'ul'
-            out.append("<li>" + _inline(_esc(mb.group(1))) + "</li>"); continue
+            out.append("<li>" + _inline(_esc(mb.group(1))) + "</li>"); i += 1; continue
         mo = re.match(r'^\d+\.\s+(.*)$', s)
         if mo:
             flush_para()
             if mode != 'ol': close_list(); out.append("<ol>"); mode = 'ol'
-            out.append("<li>" + _inline(_esc(mo.group(1))) + "</li>"); continue
+            out.append("<li>" + _inline(_esc(mo.group(1))) + "</li>"); i += 1; continue
         if mode in ('ul','ol'): close_list()
         para.append(_esc(s))
+        i += 1
     flush_para(); close_list()
     if mode == 'pre': out.append("</code></pre>")
     return "\n".join(out)
@@ -1392,20 +1691,39 @@ def run(session, p_artifact_id):
     if _exists(existing):
         return {"artifact_id":p_artifact_id,"stage_path":existing,"created":False,"note":"existing html reused"}
 
-    md = content.get("body_md") or ""
-    if not md:
-        # Defensive (post-normalization this should not fire): compose losslessly via the shared
-        # normalizer instead of raw-dumping JSON. Handles pre-migration cached rows on the fly.
+    # E-014: template-stamped narratives render section-by-section from NARRATIVE_TEMPLATE
+    # (heading from the template, body from that section's markdown) so the look is single-sourced
+    # from the same governed table as the structure. Legacy/templateless narratives fall back to body_md.
+    body = None
+    tmpl = content.get("template")
+    if tmpl:
         try:
-            _rr = session.sql("SELECT TO_JSON(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(PARSE_JSON(?), 'NARRATIVE')) AS J",
-                              params=[json.dumps(content)]).collect()
-            if _rr and _rr[0]["J"]:
-                md = (json.loads(_rr[0]["J"]).get("body_md") or "")
+            trows = session.sql("SELECT SECTION_KEY, HEADING FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE WHERE TEMPLATE = ? ORDER BY ORD", params=[str(tmpl)]).collect()
         except Exception:
-            md = ""
-    if not md:
-        md = "_(empty narrative)_"
-    body = _md(md)
+            trows = []
+        if trows:
+            segs = []
+            for tr in trows:
+                sv = content.get(tr["SECTION_KEY"])
+                if isinstance(sv, str) and sv.strip():
+                    segs.append("<h2>" + _esc(tr["HEADING"]) + "</h2>\n" + _md(sv))
+            if segs:
+                body = "\n".join(segs)
+    if body is None:
+        md = content.get("body_md") or ""
+        if not md:
+            # Defensive (post-normalization this should not fire): compose losslessly via the shared
+            # normalizer instead of raw-dumping JSON. Handles pre-migration cached rows on the fly.
+            try:
+                _rr = session.sql("SELECT TO_JSON(GUPPIWHEEL.PUBLIC.NORMALIZE_ARTIFACT_CONTENT(PARSE_JSON(?), 'NARRATIVE')) AS J",
+                                  params=[json.dumps(content)]).collect()
+                if _rr and _rr[0]["J"]:
+                    md = (json.loads(_rr[0]["J"]).get("body_md") or "")
+            except Exception:
+                md = ""
+        if not md:
+            md = "_(empty narrative)_"
+        body = _md(md)
     title = r["TITLE"] or p_artifact_id
     bits = [_esc(r["STAGE"])]
     if r["OWNER"]: bits.append("owner " + _esc(r["OWNER"]))
@@ -1428,6 +1746,9 @@ def run(session, p_artifact_id):
         ".body h4{font-size:.92rem;color:#cbd5e1;margin:14px 0 4px}"
         ".body p{margin:10px 0;color:#cbd5e1}"
         ".body ul,.body ol{margin:10px 0 10px 26px;color:#cbd5e1}.body li{margin:4px 0}"
+        ".body table{width:100%;border-collapse:collapse;margin:14px 0;background:#12131e;border:1px solid #1e2030;border-radius:8px;overflow:hidden;display:block;overflow-x:auto}"
+        ".body thead{background:#171826}.body th,.body td{padding:10px 12px;border-bottom:1px solid #1e2030;text-align:left;vertical-align:top;min-width:160px}"
+        ".body th{font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;color:#8aa0c4}.body tbody tr:last-child td{border-bottom:none}"
         ".body a{color:#29B5E8;text-decoration:none}.body a:hover{text-decoration:underline}"
         ".body strong{color:#fff}"
         ".body code{background:#171826;border:1px solid #1e2030;border-radius:4px;padding:1px 5px;font-size:.88em}"
@@ -1557,4 +1878,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.19.3', 'Canonicalize agent name to Stewart (drop the Steward homophone in prose); recreate STEWART_AGENT live from canonical seed spec (also reconciles instruction drift)', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.20.0', 'E-014 narrative templating: NARRATIVE_TEMPLATE governed structure + VALIDATE_NARRATIVE_CONTENT write-path gate (hard-reject drift), CREATE_NARRATIVE/UPDATE_NARRATIVE paved road, template-driven renderer, Bob refactor (section-keyed, ROLE-based default Sonnet writer + opt-in bake-off, conform-or-repair), NARRATIVE_CONFORMANCE_V tripwire, build_narrative CoWork tool', FALSE);

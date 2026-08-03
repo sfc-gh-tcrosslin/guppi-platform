@@ -140,6 +140,7 @@
     var kidCount = (childrenOf[it.id] || []).length;
     head.innerHTML = '<span class="twisty">&#9656;</span><span class="chip stage-' + esc(it.stage) + ' stage">' + esc(it.stage) +
       '</span><span class="init-title">' + esc(it.title) + '</span>' +
+      '<span class="mono owner" title="Started by">by ' + esc(it.owner || '\u2014') + '</span>' +
       (kidCount ? '<span class="mono kidcount">' + kidCount + ' \u25be</span>' : '') +
       '<span class="mono">' + esc(it.id) + "</span>";
     var tree = el("div", "tree");

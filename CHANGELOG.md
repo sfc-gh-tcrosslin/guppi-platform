@@ -2,6 +2,21 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.20.0] — 2026-08-03
+
+### Feature — E-014 Narrative templating: one content structure, enforced at the write-path (no drift)
+
+Every narrative is now authored to a **governed template**, enforced where it is written — not by prompting. Legacy narratives are grandfathered (go-forward only).
+
+- **`NARRATIVE_TEMPLATE` (governance-as-data).** New table: one row per (template, section) with ORD, REQUIRED, HEADING, KIND, HINT, TEMPLATE_VERSION. Four starter templates seeded: `default` (6 sections), `account_brief` (6), `internal_plan` (5), `position` (4). Changing the structure = editing rows, never code/prompt.
+- **`VALIDATE_NARRATIVE_CONTENT` + `CREATE_ARTIFACT` gate.** A session-backed validator reads the template, **hard-rejects** a missing required section or an unknown section, composes a canonical `body_md` in ORD order (headings from the template), and stamps `template` + `template_version`. `CREATE_ARTIFACT`'s NARRATIVE branch enforces it whenever content declares a template; templateless/launch-pointer narratives keep the legacy `body_md` path.
+- **`CREATE_NARRATIVE` / `UPDATE_NARRATIVE` paved road.** Section-keyed authoring doors that delegate to the single write path (RULE-029), so every narrative born through them is template-conformant.
+- **Template-driven renderer.** `ENSURE_NARRATIVE_HTML` renders section-by-section from `NARRATIVE_TEMPLATE` (markdown tables/lists supported), legacy `body_md` fallback.
+- **Bob is THE narrative writer (refactor).** `BOB_EXECUTE` generates its rubric from the template, emits **section-keyed** output, selects writers via `MODEL_CATALOG.ROLE` — default a single **Sonnet-class** writer (not Opus), opt-in `P_BAKEOFF` for the full multi-model bake-off — cross-judges with independent models (RULE-023), runs **conform-or-repair** against the gate, and writes the winner via `CREATE_NARRATIVE`. New 5-arg signature `(P_RESEARCH_ID, P_TARGET, P_ANGLE, P_TEMPLATE, P_BAKEOFF)` plus a 3-arg stub (auto-template, single-writer) for CoWork/legacy.
+- **`MODEL_CATALOG.ROLE`** set: `claude-sonnet-4-5` + `openai-gpt-4.1` = `both` (writer-eligible + judge), `llama3.3-70b` + `mistral-large2` = `judge`.
+- **`NARRATIVE_CONFORMANCE_V` tripwire**, wired into `GUPPI_CONFORMANCE_V` as `narrative-conformance` (PASS). Lists only template-stamped narratives that violate their template; legacy unstamped narratives are exempt.
+- **Bob callable from CoWork.** New `build_narrative` generic tool on `GUPPIWHEEL_COWORK_AGENT` wired to `BOB_EXECUTE`, with Building-stage dispatch instructions.
+
 ## [3.19.3] — 2026-07-21
 
 ### Fix — Canonicalize the agent name to "Stewart" (kill the Steward/Stewart drift)

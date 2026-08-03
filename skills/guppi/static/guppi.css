@@ -125,6 +125,7 @@ code{background:var(--surface2);padding:0.05rem 0.3rem;border-radius:3px;font-si
 .prod.open>.prod-body{display:block}
 .prod.open>.prod-head .twisty{transform:rotate(90deg)}
 .kidcount{opacity:.7;margin-right:0.4rem}
+.owner{opacity:.6;margin-right:0.6rem;white-space:nowrap}
 
 /* ---------- Outcomes scorecard ---------- */
 .chip.real{background:var(--green);color:#04201c}

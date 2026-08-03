@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.2 — Engine Seed 02: Rules
+-- guppi-platform v3.20.0 — Engine Seed 02: Rules
 -- TIER 0 (INVARIANT): doctrine is data. Enabled RULES rows are authoritative; agents
 --   read them, never paraphrase. You may ADD rows (that extends doctrine); do not gut
 --   the core governance rules. See COCO.md, Tier 0 #5.

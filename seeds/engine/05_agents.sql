@@ -101,6 +101,7 @@ instructions:
     4. Advance stage: call advance_stage (rules engine validates)
     5. Publish a LAUNCHABLE: call publish_artifact ONLY for NARRATIVE/APP/MODEL/DASHBOARD that carry a launch spec (something a human opens).
     6. Record any OTHER artifact: call create_artifact for non-launchable wheel artifacts — RESEARCH findings, STORY, EPIC, OUTCOME — that have no launch spec. (This is how a research finding lands under an initiative, e.g. P_PARENT_ID=INIT-29.)
+    7. Build a narrative (Bob): call build_narrative with P_RESEARCH_ID (a RESEARCH artifact, e.g. RES-25) to have Bob author a NARRATIVE. Bob grounds in that research, writes to a governed template (E-014, no drift), cross-judges it for trust, and writes the winner into the wheel under the research's initiative. Optional P_TARGET (subject) and P_ANGLE (e.g. 'internal plan' or 'position narrative for the account exec'). Bob is the narrative WRITER — do not hand-author narrative prose yourself; dispatch to Bob.
 
     WHICH READ TOOL: need structured facts/counts/lineage? -> flywheel_query. Need to read or summarize what an artifact SAYS? -> search_artifacts.
     WHICH WRITE TOOL: launch spec? -> publish_artifact. No launch spec? -> create_artifact. Never hand-assign an ID; the registry allocates it (leave P_EXPLICIT_ID empty).
@@ -182,6 +183,17 @@ tools:
           P_METADATA: { type: string, description: "Optional JSON STRING." }
         required: ["P_TYPE", "P_TITLE"]
   - tool_spec:
+      type: generic
+      name: build_narrative
+      description: "Have Bob author a NARRATIVE from a RESEARCH artifact. Bob gathers grounding, writes to a governed narrative template (no drift), cross-judges for trust, and writes the winning template-conformant NARRATIVE into the wheel under the research's initiative. Returns the narrative id + trust. Use this instead of hand-writing narrative prose."
+      input_schema:
+        type: object
+        properties:
+          P_RESEARCH_ID: { type: string, description: "The RESEARCH artifact to build from, e.g. RES-25." }
+          P_TARGET: { type: string, description: "Subject of the narrative (account/topic). Optional; defaults to the research title." }
+          P_ANGLE: { type: string, description: "Framing, e.g. 'internal plan' (internal_plan template) or 'position narrative for the account exec' (position template). Optional." }
+        required: ["P_RESEARCH_ID"]
+  - tool_spec:
       type: cortex_analyst_text_to_sql
       name: flywheel_query
       description: "Query GuppiWheel STRUCTURED facts: counts, stages, owners, lineage (parent-child), tags, dates. Use for 'how many', 'which stage', 'who owns', 'what hangs off INIT-X'. NOT for reading artifact body text — use search_artifacts for that."
@@ -204,6 +216,10 @@ tool_resources:
     execution_environment: { type: warehouse, warehouse: __WH__ }
   create_artifact:
     identifier: GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT
+    type: procedure
+    execution_environment: { type: warehouse, warehouse: __WH__ }
+  build_narrative:
+    identifier: GUPPIWHEEL.PUBLIC.BOB_EXECUTE
     type: procedure
     execution_environment: { type: warehouse, warehouse: __WH__ }
   flywheel_query:

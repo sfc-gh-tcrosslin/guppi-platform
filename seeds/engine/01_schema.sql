@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.16.2 — Engine Seed 01: Schema
+-- guppi-platform v3.20.0 — Engine Seed 01: Schema
 -- TIER 0 (INVARIANT): ARTIFACTS source-of-truth, gap-free ID_CONVENTIONS registry,
 --   revoked direct INSERT, DUPLICATE_ID_SCREAM_V + GROUNDING_HEALTH_V tripwires.
 --   Re-author SQL if you must, but these guarantees must survive (see COCO.md, Tier 0).
@@ -148,6 +148,12 @@ USING (
 ) s ON t.MODEL_NAME = s.MODEL_NAME
 WHEN NOT MATCHED THEN INSERT (MODEL_NAME, PROVIDER, ROLE, ENABLED, LAST_VERIFIED, NOTES)
   VALUES (s.MODEL_NAME, s.PROVIDER, 'authoring', TRUE, CURRENT_TIMESTAMP(), 'Cortex AI_COMPLETE verified callable');
+
+-- E-014: narrative writer vs judge roles (RULE-023 stays model-agnostic; the DEFAULT single
+-- narrative writer is a Sonnet-class model, not Opus -- BOB_EXECUTE picks it by name from the
+-- authoring pool). 'both' = eligible writer AND judge; 'judge' = judge-only. Idempotent.
+UPDATE GUPPIWHEEL.PUBLIC.MODEL_CATALOG SET ROLE = 'both'  WHERE MODEL_NAME IN ('claude-sonnet-4-5','openai-gpt-4.1');
+UPDATE GUPPIWHEEL.PUBLIC.MODEL_CATALOG SET ROLE = 'judge' WHERE MODEL_NAME IN ('llama3.3-70b','mistral-large2');
 
 -- BOB_BAKEOFF_CANDIDATES — working set for Bob's model bake-off (scratch; winners become artifacts).
 CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.BOB_BAKEOFF_CANDIDATES (
@@ -390,6 +396,65 @@ WHEN MATCHED THEN UPDATE SET PURPOSE=s.PURPOSE, ID_PREFIX=s.ID_PREFIX, LIFECYCLE
 WHEN NOT MATCHED THEN INSERT (TYPE,PURPOSE,ID_PREFIX,LIFECYCLE,STAGES,IS_LAUNCHABLE,INTRODUCED_IN,NOTES,IS_APP,ID_SERIES_ENTITY,ID_PRODUCT_SCOPED)
   VALUES (s.TYPE,s.PURPOSE,s.ID_PREFIX,s.LIFECYCLE,s.STAGES,s.IS_LAUNCHABLE,s.INTRODUCED_IN,s.NOTES,s.IS_APP,s.ID_SERIES_ENTITY,s.ID_PRODUCT_SCOPED);
 
+-- =============================================================================
+-- NARRATIVE_TEMPLATE — the canonical narrative CONTENT structure as governance-as-data
+-- (like TYPE_REGISTRY / RULES). One row per (template, section). The write-path
+-- normalizer validates NARRATIVE content against the declared template and HARD-REJECTS
+-- a missing required section; the renderer iterates these rows in ORD order. Changing the
+-- structure = editing rows here, never code/prompt. Each narrative stamps the
+-- TEMPLATE_VERSION it conformed to (go-forward: legacy narratives carry no stamp and are
+-- exempt from the conformance tripwire). INIT-70 / E-014 (narrative write-path hardening).
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE (
+    TEMPLATE         VARCHAR(40)   NOT NULL,
+    SECTION_KEY      VARCHAR(40)   NOT NULL,
+    ORD              NUMBER        NOT NULL,
+    REQUIRED         BOOLEAN       NOT NULL DEFAULT TRUE,
+    HEADING          VARCHAR(120)  NOT NULL,
+    KIND             VARCHAR(20)   NOT NULL DEFAULT 'prose',  -- prose | list | table | prose_or_table
+    HINT             VARCHAR(500),
+    TEMPLATE_VERSION VARCHAR(20)   NOT NULL DEFAULT '1',
+    UPDATED_AT       TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (TEMPLATE, SECTION_KEY)
+);
+
+MERGE INTO GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE t
+USING (
+  SELECT column1 AS TEMPLATE, column2 AS SECTION_KEY, column3 AS ORD, column4 AS REQUIRED,
+         column5 AS HEADING, column6 AS KIND, column7 AS HINT, column8 AS TEMPLATE_VERSION
+  FROM VALUES
+    -- default: general-purpose narrative
+    ('default','summary',1,TRUE,'Summary','prose','1-3 sentences: what this is and the punchline','1'),
+    ('default','context',2,TRUE,'Context','prose','Background the reader needs','1'),
+    ('default','findings',3,TRUE,'Findings','prose_or_table','The substance; tables welcome','1'),
+    ('default','recommendation',4,TRUE,'Recommendation','prose','What to do','1'),
+    ('default','next_steps',5,TRUE,'Next Steps','list','Concrete ordered actions','1'),
+    ('default','honesty',6,TRUE,'Honesty / Caveats','prose','Real vs art-of-possible; limits','1'),
+    -- position: customer-facing positioning narrative (no Guppi mention)
+    ('position','thesis',1,TRUE,'Thesis','prose','1-2 sentences','1'),
+    ('position','moves',2,TRUE,'Moves','list','Exactly 4 moves, each a bold headline + 1-2 sentences','1'),
+    ('position','honest_boundary',3,TRUE,'Honest Boundary','prose','What Snowflake is NOT right for','1'),
+    ('position','why_now',4,TRUE,'Why Now','prose','The timing close','1'),
+    -- internal_plan: internal engineering-first deliverable / plan
+    ('internal_plan','summary',1,TRUE,'Summary','prose','What and why, 1-3 sentences','1'),
+    ('internal_plan','context',2,TRUE,'Context','prose','Grounding + current state','1'),
+    ('internal_plan','phased_plan',3,TRUE,'Phased Plan','list','Ordered steps with a de-risk gate','1'),
+    ('internal_plan','risks',4,TRUE,'Risks / Open Questions','prose','Honest unknowns','1'),
+    ('internal_plan','why_now',5,TRUE,'Why Now','prose','The timing close','1'),
+    -- account_brief: account/demo proposal (NAR-91 shape)
+    ('account_brief','summary',1,TRUE,'Summary','prose','The punchline for the reader','1'),
+    ('account_brief','account_context',2,TRUE,'Account Context','prose','Who they are, footprint, timing','1'),
+    ('account_brief','proposed_demos',3,TRUE,'Proposed Demos / Apps','table','Demo -> lever -> reuse -> peer proof -> status','1'),
+    ('account_brief','peer_proof',4,TRUE,'Peer Proof','prose_or_table','Real comparable wins','1'),
+    ('account_brief','why_now',5,TRUE,'Renewal / Why Now','prose','The commercial hook','1'),
+    ('account_brief','honesty',6,TRUE,'Honesty','prose','Real vs art-of-possible; do not over-promise','1')
+) s
+ON t.TEMPLATE = s.TEMPLATE AND t.SECTION_KEY = s.SECTION_KEY
+WHEN MATCHED THEN UPDATE SET ORD=s.ORD, REQUIRED=s.REQUIRED, HEADING=s.HEADING, KIND=s.KIND,
+  HINT=s.HINT, TEMPLATE_VERSION=s.TEMPLATE_VERSION, UPDATED_AT=CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (TEMPLATE, SECTION_KEY, ORD, REQUIRED, HEADING, KIND, HINT, TEMPLATE_VERSION)
+  VALUES (s.TEMPLATE, s.SECTION_KEY, s.ORD, s.REQUIRED, s.HEADING, s.KIND, s.HINT, s.TEMPLATE_VERSION);
+
 -- APPS_V — app-family launchables. Derives from TYPE_REGISTRY.IS_APP (single source; defined after the registry).
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.APPS_V AS
 SELECT ID, STAGE, TITLE, OWNER, CONTENT, TAGS, METADATA, PARENT_ID, CREATED_AT, UPDATED_AT,
@@ -457,6 +522,25 @@ SELECT ID, PRODUCT_ID, 'internal key in shared CONTENT', LEFT(TITLE,60)
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
 WHERE PRODUCT_ID='guppi' AND (CONTENT:strategic_note IS NOT NULL OR CONTENT:internal IS NOT NULL);
 
+-- NARRATIVE_CONFORMANCE_V — E-014 go-forward tripwire. Lists template-STAMPED narratives that
+-- violate their declared template (missing/empty required section, or an unknown template).
+-- Legacy narratives (no CONTENT:template stamp) are grandfathered = never listed. Healthy = empty.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.NARRATIVE_CONFORMANCE_V AS
+SELECT a.ID,
+       a.CONTENT:template::string AS template,
+       LISTAGG(t.SECTION_KEY, ', ') WITHIN GROUP (ORDER BY t.ORD) AS missing_sections
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+JOIN GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE t
+  ON t.TEMPLATE = a.CONTENT:template::string AND t.REQUIRED = TRUE
+WHERE a.TYPE = 'NARRATIVE' AND a.SUPERSEDED_BY IS NULL AND a.CONTENT:template IS NOT NULL
+  AND (GET(a.CONTENT, t.SECTION_KEY) IS NULL OR TRIM(GET(a.CONTENT, t.SECTION_KEY)::string) = '')
+GROUP BY a.ID, a.CONTENT:template::string
+UNION ALL
+SELECT a.ID, a.CONTENT:template::string AS template, 'UNKNOWN TEMPLATE' AS missing_sections
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.TYPE = 'NARRATIVE' AND a.SUPERSEDED_BY IS NULL AND a.CONTENT:template IS NOT NULL
+  AND a.CONTENT:template::string NOT IN (SELECT DISTINCT TEMPLATE FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE);
+
 -- GUPPI_CONFORMANCE_V — the conformance gate (COCO.md "you got Guppi when this passes").
 -- Definition of done after any build or re-author: every row must read PASS. These are the
 -- Tier 0 invariants that drift silently because Snowflake does not enforce PK/UNIQUE/FK.
@@ -476,6 +560,9 @@ SELECT 'rules-present', 'Tier0 #5 (doctrine is data)',
 UNION ALL
 SELECT 'no-share-leak', 'Tier0 confidentiality (product share boundary, STO-SUBSTRATE-8)',
        IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V) = 0, 'PASS', 'FAIL')
+UNION ALL
+SELECT 'narrative-conformance', 'E-014 (template-stamped narratives match their template; legacy grandfathered)',
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.NARRATIVE_CONFORMANCE_V) = 0, 'PASS', 'FAIL')
 UNION ALL
 -- INIT-75 Thread A: structural chain health. Tolerant of a not-yet-baselined chain (zero hashed rows
 -- = feature inactive = PASS). Once baselined: exactly 1 genesis, no fork/dangling/dup, no unhashed rows.
