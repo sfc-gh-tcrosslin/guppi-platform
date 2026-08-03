@@ -1,5 +1,5 @@
 -- =============================================================================
--- guppi-platform v3.20.0 — Engine Seed 03: Procedures
+-- guppi-platform v3.20.1 — Engine Seed 03: Procedures
 -- TIER 1 (DEFAULT): proc shapes are ours and yours to re-author — EXCEPT the Tier 0
 --   guarantee they enforce: CREATE_ARTIFACT is the single gated write path with
 --   gap-free atomic ID allocation. Keep the chokepoint; restyle the rest. See COCO.md.
@@ -1878,4 +1878,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.20.0', 'E-014 narrative templating: NARRATIVE_TEMPLATE governed structure + VALIDATE_NARRATIVE_CONTENT write-path gate (hard-reject drift), CREATE_NARRATIVE/UPDATE_NARRATIVE paved road, template-driven renderer, Bob refactor (section-keyed, ROLE-based default Sonnet writer + opt-in bake-off, conform-or-repair), NARRATIVE_CONFORMANCE_V tripwire, build_narrative CoWork tool', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.20.1', 'Outcomes viewer: AILC-style collapsible outcome rows + contextual per-metric baseline->target trajectories (replacing the account-wide filler chart on value outcomes); wheel outcome keeps relabeled throughput chart; honest empty-state for content-thin outcomes; scorecard now emits non-app CONTENT.metrics so value outcomes (e.g. OUT-4) render their trajectories', FALSE);

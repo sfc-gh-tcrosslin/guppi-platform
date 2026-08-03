@@ -2,6 +2,16 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.20.1] — 2026-08-03
+
+### Fix/UX — Outcomes tab: collapsible rows + contextual per-metric charts
+
+The Outcomes tab rendered every outcome as a full, always-expanded card (stacked/squeezed), and fed *every* real outcome the same account-wide "artifacts created / week" bar chart — so value outcomes like OUT-3/OUT-4 showed an identical, context-free chart.
+
+- **Collapsible list** — outcomes are now AILC-style click-to-expand rows (`.oc-row`, mirrors the `.prod` twisty toggle); detail builds lazily on first open. Collapsed row shows a headline signal (wheel: spins/28d; value: metrics-tracked count).
+- **Contextual charts** — value outcomes render per-metric **baseline → now → target** trajectories (`metricTrajectory`, direction-aware so "trending to zero" targets fill correctly) instead of the global bar chart. Outcomes with no metrics show an honest empty-state (no filler chart). The wheel outcome keeps its spin trio + gears + the throughput chart, now relabeled "Wheel throughput — account-wide".
+- **Scorecard fix** — `outcomes_scorecard()` previously emitted metrics only for outcomes with a `metric_app`, silently dropping `CONTENT.metrics`. It now falls back to the outcome's own declared metrics, so value outcomes (e.g. OUT-4, 6 baseline/target metrics, no app) render their trajectories.
+
 ## [3.20.0] — 2026-08-03
 
 ### Feature — E-014 Narrative templating: one content structure, enforced at the write-path (no drift)

@@ -153,6 +153,18 @@ code{background:var(--surface2);padding:0.05rem 0.3rem;border-radius:3px;font-si
 .oc-track .tick.tgt{background:var(--yellow)}
 .oc-legend{font-size:0.62rem;color:var(--muted);margin-top:0.35rem}
 .oc-honesty{font-size:0.68rem;color:var(--muted);line-height:1.5;margin-top:0.7rem;border-top:1px solid var(--border);padding-top:0.6rem}
+/* collapsible outcome rows (mirror AILC .prod) */
+.oc-row{border:1px solid var(--border);border-radius:9px;margin-bottom:0.7rem;overflow:hidden;background:var(--surface2,rgba(255,255,255,.02))}
+.oc-row-head{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:0.6rem;align-items:center;padding:0.7rem 1rem;cursor:pointer}
+.oc-row-head:hover{background:rgba(41,181,232,.07)}
+.oc-row-title{font-weight:700;font-size:0.9rem;letter-spacing:.01em}
+.oc-row-sig{opacity:.7;white-space:nowrap;font-size:0.7rem}
+.oc-detail{display:none;padding:0.1rem 1rem 0.9rem}
+.oc-row.open>.oc-detail{display:block}
+.oc-row.open>.oc-row-head .twisty{transform:rotate(90deg)}
+.oc-trajs{display:flex;flex-direction:column;gap:0.75rem;margin-top:0.5rem}
+.oc-traj .oc-chart-title{text-transform:none;letter-spacing:0;font-size:0.72rem;color:var(--text)}
+.oc-traj-desc{color:var(--muted);font-weight:400;text-transform:none}
 /* spin trio (output/speed/cost) */
 .spin-trio{margin:0.9rem 0;padding:0.8rem;background:linear-gradient(135deg,rgba(20,184,166,.08),rgba(41,181,232,.06));border:1px solid var(--green);border-radius:10px}
 .spin-cells{display:flex;gap:0.8rem;margin-top:0.6rem;flex-wrap:wrap}

@@ -507,6 +507,24 @@ def outcomes_scorecard():
                         "baseline": o.get("baseline"),
                         "target": o.get("target"),
                     })
+            # Fallback: outcomes without a metric_app still declare metrics in
+            # CONTENT.metrics (name/description/baseline/target/status, value usually
+            # unresolved). Emit those too so value outcomes (e.g. OUT-4) render their
+            # baseline->target trajectories instead of an empty card.
+            resolved = set(m["name"] for m in metrics)
+            for name, o in own.items():
+                if name in resolved:
+                    continue
+                metrics.append({
+                    "name": name,
+                    "description": o.get("description") or "",
+                    "value": o.get("value"),
+                    "unit": o.get("unit") or "",
+                    "is_simulated": o.get("is_simulated", is_sim),
+                    "status": o.get("status") or "",
+                    "baseline": o.get("baseline"),
+                    "target": o.get("target"),
+                })
             outcomes.append({
                 "id": r[0], "title": r[1], "product_id": r[2], "stage": r[5],
                 "is_simulated": is_sim,

@@ -331,7 +331,7 @@
       var h = Math.round(100 * w.n / max);
       return '<span class="oc-bar" title="' + esc(w.week) + ': ' + w.n + '"><i style="height:' + h + '%"></i><em>' + esc(String(w.week).slice(5)) + '</em></span>';
     }).join("");
-    return '<div class="oc-chart"><div class="oc-chart-title">Artifacts created / week (real, last 12w)</div><div class="oc-bars">' + bars + '</div></div>';
+    return '<div class="oc-chart"><div class="oc-chart-title">Wheel throughput \u2014 all artifacts created / week (account-wide, last 12w)</div><div class="oc-bars">' + bars + '</div></div>';
   }
   function coverageGauge(m) {
     if (!m || m.value === null || m.value === undefined) return '';
@@ -380,35 +380,82 @@
       + gearCell('outer', outer, 'Outcomes Resolved<br>learn', 'all-time')
       + '</div></div>';
   }
-  function outcomeCard(o, weekly) {
-    var featured = !o.is_simulated;
-    var metrics = o.metrics || [];
-    var spinBlock = '', tiles;
-    if (featured) {
-      spinBlock = spinTrio(metrics) + gearStrip(metrics);
-      var rest = metrics.filter(function (m) { return SPIN_ALL.indexOf(m.name) < 0; });
-      tiles = rest.map(metricTile).join("");
-    } else {
-      tiles = metrics.map(metricTile).join("") || '<div class="empty">No metrics.</div>';
-    }
-    var cov = null;
-    metrics.forEach(function (m) { if (m.name === 'product_coverage_pct') cov = m; });
-    var extra = featured ? (coverageGauge(cov) + weeklyBars(weekly)) : '';
-    return '<div class="card oc-card' + (featured ? ' featured' : '') + '">'
-      + '<div class="c-head"><div class="c-title">' + esc(o.id) + ' \u2014 ' + esc(o.title) + '</div>' + ocChip(o.is_simulated) + '</div>'
-      + (o.objective ? '<div class="oc-obj">' + esc(o.objective) + '</div>' : '')
-      + spinBlock
-      + (tiles ? '<div class="oc-metrics">' + tiles + '</div>' : '')
-      + extra
-      + (o.honesty ? '<div class="oc-honesty"><b>Honesty:</b> ' + esc(o.honesty) + '</div>' : '')
+  // A 'wheel' outcome carries the spin/gear metrics; everything else is a 'value' outcome.
+  function outcomeKind(o) {
+    var names = (o.metrics || []).map(function (m) { return m.name; });
+    return SPIN_ALL.some(function (s) { return names.indexOf(s) >= 0; }) ? 'wheel' : 'value';
+  }
+  function numOr(v) {
+    if (v === null || v === undefined || v === '') return null;
+    var n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+    return isFinite(n) ? n : null;
+  }
+  // Direction-aware progress: target may be BELOW baseline (e.g. 590000 -> 0). No live value -> now = baseline.
+  function metricTrajectory(m) {
+    var b = numOr(m.baseline), t = numOr(m.target), n = numOr(m.value);
+    if (b === null || t === null) return null;
+    var now = (n === null) ? b : n;
+    var span = t - b;
+    var pct = (span === 0) ? (now >= t ? 100 : 0) : Math.max(0, Math.min(100, 100 * (now - b) / span));
+    var unit = m.unit ? ' ' + esc(m.unit) : '';
+    var nowStr = (n === null) ? fmtVal(m.baseline) : fmtVal(m.value);
+    return '<div class="oc-traj">'
+      + '<div class="oc-chart-title">' + esc(m.name) + (m.description ? ' <span class="oc-traj-desc">' + esc(m.description) + '</span>' : '') + '</div>'
+      + '<div class="oc-track"><i class="fill" style="width:' + pct + '%"></i></div>'
+      + '<div class="oc-legend">baseline ' + esc(fmtVal(m.baseline)) + unit + ' &rarr; <b>now ' + esc(nowStr) + unit + '</b> &rarr; target ' + esc(fmtVal(m.target)) + unit + (m.status ? ' &middot; ' + esc(m.status) : '') + '</div>'
       + '</div>';
+  }
+  function outcomeHeadline(o) {
+    if (outcomeKind(o) === 'wheel') { var s = mByName(o.metrics, 'spins_4wk'); return s ? (fmtVal(s.value) + ' spins / 28d') : ''; }
+    var ms = o.metrics || [];
+    var tr = ms.filter(function (m) { return numOr(m.baseline) !== null && numOr(m.target) !== null; }).length;
+    if (tr) return tr + ' metric' + (tr > 1 ? 's' : '') + ' tracked';
+    if (ms.length) return ms.length + ' metric' + (ms.length > 1 ? 's' : '');
+    return 'no metrics yet';
+  }
+  function outcomeDetail(o, weekly) {
+    var kind = outcomeKind(o), metrics = o.metrics || [], html = '';
+    if (o.objective) html += '<div class="oc-obj">' + esc(o.objective) + '</div>';
+    if (kind === 'wheel') {
+      html += spinTrio(metrics) + gearStrip(metrics);
+      var rest = metrics.filter(function (m) { return SPIN_ALL.indexOf(m.name) < 0; });
+      var tiles = rest.map(metricTile).join("");
+      if (tiles) html += '<div class="oc-metrics">' + tiles + '</div>';
+      var cov = mByName(metrics, 'product_coverage_pct'); if (cov) html += coverageGauge(cov);
+      html += weeklyBars(weekly);
+    } else if (!metrics.length) {
+      html += '<div class="empty">No metrics tracked yet \u2014 add an objective and baseline/target metrics to this outcome.</div>';
+    } else {
+      var trajs = [], tls = [];
+      metrics.forEach(function (m) { var tj = metricTrajectory(m); if (tj) trajs.push(tj); else tls.push(metricTile(m)); });
+      if (tls.length) html += '<div class="oc-metrics">' + tls.join("") + '</div>';
+      if (trajs.length) html += '<div class="oc-trajs">' + trajs.join("") + '</div>';
+    }
+    if (o.honesty) html += '<div class="oc-honesty"><b>Honesty:</b> ' + esc(o.honesty) + '</div>';
+    return html;
+  }
+  function outcomeRow(o, weekly) {
+    var box = el("div", "oc-row"); box.dataset.id = o.id;
+    var head = el("div", "oc-row-head");
+    head.innerHTML = '<span class="twisty">&#9656;</span>'
+      + '<span class="oc-row-title">' + esc(o.id) + ' \u2014 ' + esc(o.title) + '</span>'
+      + ocChip(o.is_simulated)
+      + (o.stage ? '<span class="chip stage-' + esc(o.stage) + ' stage">' + esc(o.stage) + '</span>' : '')
+      + '<span class="mono oc-row-sig">' + esc(outcomeHeadline(o)) + '</span>';
+    var detail = el("div", "oc-detail");
+    head.addEventListener("click", function () {
+      box.classList.toggle("open");
+      if (box.classList.contains("open") && !detail.dataset.built) { detail.innerHTML = outcomeDetail(o, weekly); detail.dataset.built = "1"; }
+    });
+    box.appendChild(head); box.appendChild(detail); return box;
   }
   function paintOutcomes() {
     var host = $("#outcomes-body"); if (!host) return;
     if (!OUTCOMES) { host.innerHTML = '<div class="empty">Loading\u2026</div>'; return; }
     var ocs = OUTCOMES.outcomes || [];
+    host.innerHTML = "";
     if (!ocs.length) { host.innerHTML = '<div class="empty">No outcomes yet.</div>'; return; }
-    host.innerHTML = ocs.map(function (o) { return outcomeCard(o, OUTCOMES.weekly_output); }).join("");
+    ocs.forEach(function (o) { host.appendChild(outcomeRow(o, OUTCOMES.weekly_output)); });
   }
   function renderOutcomes() {
     if (OUTCOMES) { paintOutcomes(); return; }
