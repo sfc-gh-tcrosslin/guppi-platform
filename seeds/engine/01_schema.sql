@@ -541,6 +541,34 @@ FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
 WHERE a.TYPE = 'NARRATIVE' AND a.SUPERSEDED_BY IS NULL AND a.CONTENT:template IS NOT NULL
   AND a.CONTENT:template::string NOT IN (SELECT DISTINCT TEMPLATE FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE);
 
+-- NARRATIVE_TEMPLATE_ADOPTION_V — render-contract visibility (E-014 follow-on).
+-- NARRATIVE_CONFORMANCE_V above only inspects narratives where CONTENT:template IS NOT NULL, so
+-- UNTEMPLATED narratives were invisible to it: the gate could read PASS while most live narratives
+-- had no template and therefore no guaranteed sections, order, or headings. That is the structural
+-- inconsistency people hit when they go to SHARE a narrative. This view exposes that population.
+-- Cohorts: LEGACY (pre-cutoff, grandfathered), MIGRATED (metadata.migrated_from set — legacy content
+-- re-created through the chokepoint; forcing it into a template would rewrite the original author's
+-- work, so it is grandfathered too), NEW (must fix). Only NEW gates conformance.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE_ADOPTION_V
+COMMENT = 'Render-contract visibility (E-014 follow-on). Exposes narratives with NO CONTENT:template, which NARRATIVE_CONFORMANCE_V cannot see. Cohorts: LEGACY (grandfathered), MIGRATED (metadata.migrated_from — legacy content re-created through the chokepoint, grandfathered), NEW (must fix). Only NEW gates conformance.'
+AS
+SELECT
+  a.ID,
+  a.TITLE,
+  a.OWNER,
+  a.CREATED_AT,
+  CASE
+    WHEN a.METADATA:migrated_from IS NOT NULL       THEN 'MIGRATED (legacy content)'
+    WHEN a.CREATED_AT < '2026-08-16'::timestamp_ntz THEN 'LEGACY (grandfathered)'
+    ELSE 'NEW (must fix)'
+  END AS cohort,
+  IFF(a.CONTENT:body_md IS NOT NULL, 'body_md fallback', 'no body_md - normalizer fallback') AS render_path,
+  IFF(a.METADATA:launch IS NOT NULL, 'has launch', 'NO launch (unshareable per RULE-018/CMP-003)') AS launch_status
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.TYPE = 'NARRATIVE'
+  AND a.SUPERSEDED_BY IS NULL
+  AND a.CONTENT:template IS NULL;
+
 -- GUPPI_CONFORMANCE_V — the conformance gate (COCO.md "you got Guppi when this passes").
 -- Definition of done after any build or re-author: every row must read PASS. These are the
 -- Tier 0 invariants that drift silently because Snowflake does not enforce PK/UNIQUE/FK.
@@ -574,7 +602,64 @@ SELECT 'chain-structural-intact', 'INIT-75 Thread A (birth-hash chain: 1 genesis
           AND (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL AND PREV_HASH IS NULL) = 1
           AND (SELECT COUNT(*) FROM (SELECT PREV_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE PREV_HASH IS NOT NULL GROUP BY PREV_HASH HAVING COUNT(*) > 1)) = 0
           AND (SELECT COUNT(*) FROM (SELECT ROW_HASH FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ROW_HASH IS NOT NULL GROUP BY ROW_HASH HAVING COUNT(*) > 1)) = 0
-         ), 'PASS', 'FAIL');
+         ), 'PASS', 'FAIL')
+UNION ALL
+-- Render contract: a NEW narrative must declare a template, else its shared structure is undefined.
+-- LEGACY + MIGRATED cohorts are grandfathered (see NARRATIVE_TEMPLATE_ADOPTION_V).
+SELECT 'narrative-template-adoption', 'Render contract (new narratives must declare a template; legacy grandfathered)',
+       IFF((SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE_ADOPTION_V
+            WHERE cohort = 'NEW (must fix)') = 0, 'PASS', 'FAIL');
+
+-- DIRECT_DML_TRIPWIRE_V — RULE-028/029 DETECTIVE control (prevention is running as CONTRIBUTOR).
+-- Flags ungoverned direct DML on protected substrate tables.
+--
+-- The discriminator that makes this work: procedures run EXECUTE AS OWNER, so their internal SQL is
+-- indistinguishable from hand-written DML by role alone — a naive version of this view flags every
+-- governed write. But client-issued statements carry a QUERY_TAG (app=cortex_code_desktop,
+-- query_source=agent_tool) while proc-internal statements carry NO tag. Tagged = a human or agent
+-- typed it (flag it). Untagged + parameterized = proc-internal (ignore). Untagged + literal is
+-- surfaced as REVIEW for non-CoCo clients (worksheets, drivers).
+--
+-- Owner-rights view so contributors can read it without their own ACCOUNT_USAGE grants; the view
+-- OWNER needs access to SNOWFLAKE.ACCOUNT_USAGE (ACCOUNTADMIN does by default).
+-- LIMITATION: ACCOUNT_USAGE latency is 45min-3h, so this is forensics, not enforcement.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.DIRECT_DML_TRIPWIRE_V
+COMMENT = 'RULE-028/029 detective control. Flags UNGOVERNED direct DML on protected substrate tables. Discriminator: client-issued statements carry a QUERY_TAG (cortex_code_desktop, query_source=agent_tool); statements inside governed stored procedures carry NO tag. Tagged = someone typed it (flag). Untagged + parameterized = proc-internal (ignored). Untagged + literal surfaces as REVIEW for non-CoCo clients. Owner-rights view so contributors read it without ACCOUNT_USAGE grants. LIMITATION: ACCOUNT_USAGE latency 45min-3h; prevention is running as GUPPIWHEEL_CONTRIBUTOR.'
+AS
+WITH base AS (
+  SELECT
+    q.START_TIME, q.USER_NAME, q.ROLE_NAME, q.QUERY_TYPE, q.QUERY_ID, q.QUERY_TEXT,
+    TRY_PARSE_JSON(q.QUERY_TAG) AS tag
+  FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY q
+  WHERE q.QUERY_TYPE IN ('INSERT','UPDATE','DELETE','MERGE','TRUNCATE_TABLE','MULTI_STATEMENT')
+    AND q.EXECUTION_STATUS = 'SUCCESS'
+    AND (q.QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.ARTIFACTS%'
+      OR q.QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.RULES%'
+      OR q.QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.ID_CONVENTIONS%'
+      OR q.QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.TYPE_REGISTRY%')
+    AND q.QUERY_TEXT NOT ILIKE '%CREATE OR REPLACE PROCEDURE%'
+    AND q.QUERY_TEXT NOT ILIKE '%CREATE OR REPLACE VIEW%'
+)
+SELECT
+  START_TIME, USER_NAME, ROLE_NAME, QUERY_TYPE,
+  CASE
+    WHEN QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.RULES%'          THEN 'RULES (doctrine)'
+    WHEN QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.ID_CONVENTIONS%' THEN 'ID_CONVENTIONS (allocator)'
+    WHEN QUERY_TEXT ILIKE '%GUPPIWHEEL.PUBLIC.TYPE_REGISTRY%'  THEN 'TYPE_REGISTRY'
+    ELSE 'ARTIFACTS'
+  END AS target_table,
+  CASE
+    WHEN tag:query_source::string = 'agent_tool' THEN 'DIRECT-AGENT (bypassed the procs)'
+    ELSE 'REVIEW-UNTAGGED-LITERAL (non-CoCo client?)'
+  END AS severity,
+  tag:app::string                AS client_app,
+  tag:desktop_session_id::string AS desktop_session_id,
+  tag:agent_session_id::string   AS agent_session_id,
+  QUERY_ID,
+  LEFT(QUERY_TEXT, 400) AS query_text
+FROM base
+WHERE tag:query_source::string = 'agent_tool'
+   OR (tag IS NULL AND QUERY_TEXT NOT LIKE '%?%');
 
 -- =============================================================================
 -- RBAC (3-tier)

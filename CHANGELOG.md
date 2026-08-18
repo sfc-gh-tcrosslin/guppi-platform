@@ -2,6 +2,32 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.21.0] — 2026-08-18
+
+### Feature/Fix — Governed repair doors + drift control: close the reasons to hand-write DML
+
+An account-level forensic audit found **five** conformance failures. Every one traced to an **ungoverned write**, not an engine bug — so this release removes the reasons anyone reaches for raw DML, and makes a recurrence visible. The account that prompted this went from 3/8 to **8/8 PASS**.
+
+What the audit actually found, and what each fix addresses:
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| duplicate `NAR-39`, 3 unhashed rows | raw `INSERT INTO ARTIFACTS` — no collision check, no birth hash | `DIRECT_DML_TRIPWIRE_V` (detect) + CONTRIBUTOR posture (prevent) |
+| invalid stage `Narrated` | direct write bypassed `ADVANCE_STAGE`, so the stage rules engine never bound | same |
+| ID counter moved **backward** 55, re-issuing live IDs | hardcoded `UPDATE ID_CONVENTIONS SET NEXT_SEQ = 40` | `RESYNC_ID_SERIES` (forward-only) |
+| customer-subject research on the shared `guppi` boundary | no governed way to change `PRODUCT_ID` | `RETAG_PRODUCT` |
+| narratives render inconsistently when shared | `NARRATIVE_CONFORMANCE_V` structurally **cannot see** untemplated narratives | `NARRATIVE_TEMPLATE_ADOPTION_V` + 8th gate check |
+
+- **`RETAG_PRODUCT(id, product, reason)`** — governed change of `ARTIFACTS.PRODUCT_ID`, the last field that still forced raw DML (`UPDATE_OWN_ARTIFACT` covers only TITLE/CONTENT/TAGS). Validates the target against `PRODUCTS` and returns the allowed list on a miss (no free-text tags), normalizes to registered casing, allows explicit clearing to NULL, refuses no-ops, requires a reason, logs before/after to `VIOLATIONS` under RULE-021. **Refuses duplicate-ID rows** — an `UPDATE … WHERE ID = ?` would hit both halves of a duplicate pair and corrupt the good one (the same hazard `BACKFILL_UNHASHED` carries). `PRODUCT_ID` is not in the birth-hash bundle, so re-tagging **preserves `ROW_HASH`**.
+- **`RESYNC_ID_SERIES(entity, reason)`** — forward-only counter repair; recomputes `NEXT_SEQ` from the data and **refuses to move backward**, the property the manual UPDATE lacked. Matches strictly `PREFIX + digits`, so date/slug-suffixed IDs (`NAR-RADAR-20260702`) and suffix-tagged IDs (`RES-111-ROCKY`) are excluded. *(An earlier cut used `REGEXP_SUBSTR(ID,'[0-9]+$')` and set a counter to 20260703 — `REGEXP_LIKE` is a **full-string** match in Snowflake.)*
+- **`DIRECT_DML_TRIPWIRE_V`** — detective control for RULE-028/029. The discriminator that makes it usable: procedures run `EXECUTE AS OWNER`, so proc-internal SQL is indistinguishable from hand-written DML **by role alone** — a naive version flags every governed write. Client-issued statements carry a `QUERY_TAG` (`app=cortex_code_desktop`, `query_source=agent_tool`); proc-internal statements carry **none**. Tagged = someone typed it. This cut false positives to zero. ACCOUNT_USAGE lag is 45min-3h, so it is forensics — **prevention is running as `GUPPIWHEEL_CONTRIBUTOR`** (RULE-034).
+- **`NARRATIVE_TEMPLATE_ADOPTION_V` + `narrative-template-adoption`** (8th conformance check). `NARRATIVE_CONFORMANCE_V` only inspects narratives where `CONTENT:template IS NOT NULL`, so untemplated ones were invisible: the gate read PASS while most live narratives had no guaranteed sections, order, or headings. That is the structural inconsistency people hit **when they go to share**. Cohorts: `LEGACY` (pre-cutoff), `MIGRATED` (`metadata.migrated_from` — legacy content re-created through the chokepoint; templating it would rewrite the original author's work), `NEW`. Only `NEW` gates.
+- **Both procs are ADMIN-gated *by grant*, not by an in-proc role check.** Inside `EXECUTE AS OWNER`, `CURRENT_USER()` is the caller but `CURRENT_ROLE()` is the **owner's** role, so role introspection in the body is unreliable. An ownership check would also fail in practice: agent-authored artifacts (Rocky) are owned by the agent, so the human curating them is never the owner.
+- **`hooks/lifecycle.sh` — artifact-before-deliverable (RULE-013) enforced at the write path.** Hybrid gate: **blocks** creating a new deliverable with no active initiative, **warns** on edits to an existing one, and records `pending_captures[]`. Deliverable detection is **extension-driven** (`.html/.pdf/.ipynb/.pptx/.docx/.plan.md`), not directory-driven — an earlier cut keyed off `~/Downloads/*` and blocked ordinary `.py` scratch files. Scratch paths (playground, `/tmp`, `.git`, `node_modules`) are exempt. Fails **open** on internal error (`set -uo pipefail`, no `-e`): a broken hook must never wedge the IDE.
+- **`skills/wheel` — new `capture` verb.** Documents the full desktop→wheel path: resolve initiative → **sandbox lint** → PUT → `PUBLISH_ARTIFACT` → provenance → supersede-on-recapture → `GET_ARTIFACT_LAUNCH` parity check → clear debt. Adds the NARRATIVE-vs-APP class split (a hand-built deck is an APP; mislabeling it a NARRATIVE guarantees it won't match the canonical render) and corrects the canonical state-file path.
+- **Sandbox lint before capture.** A deck that renders locally can still break when shared: the Snowflake report sandbox blocks remote/sibling `<script src>`, inline handlers, `eval`, and runtime network calls. Three.js is **vendored** at `/libs/three@0.169.0/three.module.min.js` as an ES module — but ES module imports are CORS-blocked over `file://`, so a WebGL deck genuinely needs **two variants**: `/libs/` for the shareable wheel copy, sibling UMD for local presenting. Keep them in sync.
+- **`seeds/upgrades/3.20.1-to-3.21.0.sql`** — additive migration (RULE-019) with a five-part post-upgrade audit, including a **latent counter drift** query that finds every series where `NEXT_SEQ` has fallen at or below the max live ID and will re-issue on next allocation. On the origin account that query surfaced **6** additional desynced series beyond the known one.
+
 ## [3.20.1] — 2026-08-03
 
 ### Fix/UX — Outcomes tab: collapsible rows + contextual per-metric charts

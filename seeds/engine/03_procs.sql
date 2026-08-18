@@ -1874,8 +1874,163 @@ def run(session, p_version, p_notes, p_force):
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION(VARCHAR, VARCHAR, BOOLEAN) TO ROLE GUPPIWHEEL_ADMIN;
 
+-- =============================================================================
+-- ADMIN REPAIR DOORS — governed alternatives to hand-written DML.
+--
+-- Every one of these exists because a real incident proved that leaving the fix
+-- to raw SQL is how the substrate drifts. They are ADMIN-gated BY GRANT rather
+-- than by in-proc role checks: inside EXECUTE AS OWNER, CURRENT_USER() is the
+-- caller but CURRENT_ROLE() is the OWNER's role, so role introspection inside the
+-- body is unreliable. Grant-based authorization is deterministic — if you can
+-- call it, you are authorized.
+-- =============================================================================
+
+-- RESYNC_ID_SERIES — forward-only repair of a desynced ID counter.
+-- Incident: a hardcoded `UPDATE ID_CONVENTIONS SET NEXT_SEQ = 40` moved the NARRATIVE
+-- counter BACKWARD by 55, so the allocator then re-issued live IDs and produced a
+-- duplicate NAR-39. This proc recomputes the counter from the data and REFUSES to move
+-- it backward, which is the property the manual UPDATE lacked.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(P_ENTITY VARCHAR, P_REASON VARCHAR)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+COMMENT = 'Forward-only repair of a desynced ID_CONVENTIONS counter. Recomputes NEXT_SEQ from the max sequential ID actually present and refuses to move the counter backward (the Aug-14 failure mode). Requires a reason; logs to VIOLATIONS under RULE-029. ADMIN-gated by grant.'
+EXECUTE AS OWNER
+AS
+$$
+def run(session, p_entity, p_reason):
+    ent = (p_entity or "").strip().upper()
+    if not ent:
+        return {"error": "P_ENTITY required"}
+    if not (p_reason or "").strip():
+        return {"error": "P_REASON required (audit trail)"}
+
+    reg = session.sql(
+        "SELECT ID_PREFIX, NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?",
+        params=[ent]
+    ).collect()
+    if not reg:
+        return {"error": "unknown entity (not in ID_CONVENTIONS)", "entity": ent}
+    prefix = reg[0]["ID_PREFIX"]
+    cur = reg[0]["NEXT_SEQ"]
+    if prefix is None:
+        return {"error": "entity has no ID_PREFIX (human-readable series)", "entity": ent}
+
+    # ONLY the gap-free sequential series counts: strictly PREFIX + digits (e.g. NAR-96).
+    # Must NOT match slug/date-suffixed IDs (NAR-RADAR-20260702, NAR-CHANGELOG-3.5.0)
+    # or suffix-tagged IDs (RES-111-ROCKY). NOTE: REGEXP_LIKE is a FULL-STRING match in
+    # Snowflake -- an earlier version used REGEXP_SUBSTR(ID,'[0-9]+$'), which matched the
+    # date-suffixed IDs and set the counter to 20260703.
+    mx = session.sql(
+        "SELECT COALESCE(MAX(TO_NUMBER(SUBSTR(ID, LENGTH(?)+1))),0) AS M "
+        "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+        "WHERE ID LIKE ? AND REGEXP_LIKE(SUBSTR(ID, LENGTH(?)+1), '[0-9]+')",
+        params=[prefix, prefix + '%', prefix]
+    ).collect()[0]["M"]
+
+    target = int(mx) + 1
+
+    # Forward-only: refuse the Aug-14 failure mode (hardcoded backward SET).
+    if cur is not None and target <= int(cur):
+        return {"entity": ent, "prefix": prefix, "next_seq": int(cur),
+                "actual_max": int(mx), "changed": False,
+                "note": "already at or ahead of data; refusing to move counter backward"}
+
+    session.sql(
+        "UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = ? WHERE ENTITY = ?",
+        params=[target, ent]
+    ).collect()
+
+    session.sql(
+        "INSERT INTO GUPPIWHEEL.PUBLIC.VIOLATIONS (RULE_ID, ARTIFACT_ID, STATUS, OVERRIDE_REASON) "
+        "SELECT 'RULE-029', ?, 'acknowledged', ?",
+        params=['ID_SERIES:' + ent,
+                'RESYNC_ID_SERIES ' + str(cur) + ' -> ' + str(target) + ' (max=' + str(mx) + '). ' + p_reason]
+    ).collect()
+
+    return {"entity": ent, "prefix": prefix, "from_next_seq": (int(cur) if cur is not None else None),
+            "to_next_seq": target, "actual_max": int(mx), "changed": True, "reason": p_reason}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
+-- RETAG_PRODUCT — governed change of ARTIFACTS.PRODUCT_ID.
+-- Closes the last gap that forced raw DML: UPDATE_OWN_ARTIFACT covers only TITLE/CONTENT/TAGS, so
+-- correcting a mis-tagged product previously required a hand-written UPDATE — exactly the pattern
+-- DIRECT_DML_TRIPWIRE_V flags. PRODUCT_ID drives the outbound share boundary (PRODUCT_SHARE_LEAK_V,
+-- STO-SUBSTRATE-8), so a mis-tag is a confidentiality event, not cosmetic — hence ADMIN, not owner.
+-- An ownership check alone would also be insufficient in practice: agent-authored artifacts (Rocky)
+-- are owned by the agent, so the human curating them is never the owner.
+-- PRODUCT_ID is NOT part of the birth-hash bundle, so re-tagging preserves ROW_HASH.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.RETAG_PRODUCT(P_ARTIFACT_ID VARCHAR, P_PRODUCT_ID VARCHAR, P_REASON VARCHAR)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+COMMENT = 'Governed re-tag of ARTIFACTS.PRODUCT_ID (the outbound share boundary). Validates the target against PRODUCTS, allows explicit clearing to NULL, refuses no-ops and duplicate-ID rows, requires a reason, and logs before/after to VIOLATIONS under RULE-021. Touches PRODUCT_ID only - not part of the birth-hash bundle, so ROW_HASH stays valid. ADMIN-gated by grant.'
+EXECUTE AS OWNER
+AS
+$$
+def run(session, p_artifact_id, p_product_id, p_reason):
+    aid = (p_artifact_id or "").strip()
+    if not aid:
+        return {"error": "P_ARTIFACT_ID required"}
+    if not (p_reason or "").strip():
+        return {"error": "P_REASON required (audit trail)"}
+
+    rows = session.sql(
+        "SELECT ID, TYPE, TITLE, OWNER, PRODUCT_ID, SUPERSEDED_BY "
+        "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", params=[aid]
+    ).collect()
+    if not rows:
+        return {"error": "artifact not found", "id": aid}
+    # Guard the same hazard BACKFILL_UNHASHED has: an UPDATE ... WHERE ID = ? would hit BOTH
+    # rows of a duplicate pair and corrupt the legitimate one. Refuse until the dup is resolved.
+    if len(rows) > 1:
+        return {"error": "duplicate ID present; resolve the duplicate before retagging",
+                "id": aid, "rows": len(rows)}
+
+    cur = rows[0]["PRODUCT_ID"]
+
+    # Empty / NULL / 'null' clears the tag -- a valid state (artifact belongs to no product).
+    raw = (p_product_id or "").strip()
+    if raw == "" or raw.lower() == "null":
+        target = None
+    else:
+        chk = session.sql(
+            "SELECT PRODUCT_ID FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE LOWER(PRODUCT_ID) = ?",
+            params=[raw.lower()]
+        ).collect()
+        if not chk:
+            allowed = [r["PRODUCT_ID"] for r in session.sql(
+                "SELECT PRODUCT_ID FROM GUPPIWHEEL.PUBLIC.PRODUCTS ORDER BY PRODUCT_ID").collect()]
+            return {"error": "unknown product; register it in PRODUCTS first (governance-as-data)",
+                    "got": p_product_id, "allowed": allowed}
+        target = chk[0]["PRODUCT_ID"]   # normalize to the registered casing
+
+    if (cur or None) == (target or None):
+        return {"id": aid, "product_id": cur, "changed": False, "note": "no-op: already tagged this way"}
+
+    session.sql(
+        "UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET PRODUCT_ID = ?, UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?",
+        params=[target, aid]
+    ).collect()
+
+    session.sql(
+        "INSERT INTO GUPPIWHEEL.PUBLIC.VIOLATIONS (RULE_ID, ARTIFACT_ID, STATUS, OVERRIDE_REASON) "
+        "SELECT 'RULE-021', ?, 'acknowledged', ?",
+        params=[aid, "RETAG_PRODUCT " + str(cur) + " -> " + str(target) + ". " + p_reason]
+    ).collect()
+
+    return {"id": aid, "type": rows[0]["TYPE"], "owner": rows[0]["OWNER"],
+            "from_product": cur, "to_product": target, "changed": True, "reason": p_reason}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RETAG_PRODUCT(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+
 -- Self-heal stamp on every seed apply. This is the SINGLE go-forward version
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.20.1', 'Outcomes viewer: AILC-style collapsible outcome rows + contextual per-metric baseline->target trajectories (replacing the account-wide filler chart on value outcomes); wheel outcome keeps relabeled throughput chart; honest empty-state for content-thin outcomes; scorecard now emits non-app CONTENT.metrics so value outcomes (e.g. OUT-4) render their trajectories', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.21.0', 'Governed repair doors + drift control: RETAG_PRODUCT and RESYNC_ID_SERIES close the last reasons to hand-write DML on the substrate; DIRECT_DML_TRIPWIRE_V detects ungoverned writes via QUERY_TAG; NARRATIVE_TEMPLATE_ADOPTION_V exposes untemplated narratives and gates conformance as an 8th check; lifecycle hook enforces artifact-before-deliverable; wheel skill gains the capture verb', FALSE);
