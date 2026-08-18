@@ -18,6 +18,14 @@ After cloning the repo, install the git pre-push hook (enforces RULE-013/014 —
 cd guppi-platform
 cp hooks/pre-push.sh .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
+
+# Customer-name guard (this repo is PUBLIC). Blocks a customer/prospect name in
+# staged changes OR in a commit message. Terms are read from the wheel
+# (GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS), never hardcoded, and cached in .git/.
+# Self-meta artifact IDs (INIT-/PLAT-/E-/RES-) are fine — we use guppi to build guppi.
+cp hooks/no-customer-names.sh .git/hooks/pre-commit
+cp hooks/no-customer-names.sh .git/hooks/commit-msg
+chmod +x .git/hooks/pre-commit .git/hooks/commit-msg
 ```
 
 To bypass for an emergency hotfix (logged in drift report):
