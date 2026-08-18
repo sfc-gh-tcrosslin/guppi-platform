@@ -520,8 +520,20 @@ git push origin main && git push snowflake main
 | oncolook-digital-pathology | ✅ | ✅ |
 | coco-skills | ✅ | ✅ |
 | building-with-coco | N/A | ✅ (webinar repo, snowflake-only) |
+| guppi-platform | ✅ (remote name: `jacinthlaval`) | ✅ (remote name: `origin`) |
 
 Add more repos to this table as they get dual remotes.
+
+**Remote names are NOT consistent across repos.** In `guppi-platform` the mapping is
+*inverted* from the pattern above: `origin` = sfc-gh-tcrosslin and `jacinthlaval` = the
+personal account. Always read `git remote -v` before pushing; do not assume `origin` is
+the personal remote.
+
+**A private repo you are not authenticated for reports `Repository not found`, not
+`Forbidden`.** GitHub deliberately masks private repos over HTTPS, so a stale/incorrect
+active `gh` account looks exactly like a deleted repo. Before concluding a remote is gone,
+run `gh auth status` — if the owning account is listed but `Active account: false`, it is
+an auth problem, not a missing repo.
 
 **NOTE:** `gh auth switch --user <personal-github>` is required before pushing to origin if the active account is sfc-gh-tcrosslin. Switch back after.
 

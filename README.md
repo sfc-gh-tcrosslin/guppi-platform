@@ -1,4 +1,4 @@
-# guppi-platform v3.20.1
+# guppi-platform v3.21.0
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
 
@@ -108,11 +108,15 @@ GUPPIWHEEL.PUBLIC
 ├── DUPLICATE_ID_SCREAM_V  -- RULE-029 tripwire (always 0 rows)
 ├── GROUNDING_HEALTH_V     -- Stewart's senses: orphans, noncanonical types/stages, dead refs
 ├── GUPPI_CONFORMANCE_V    -- the conformance gate (every row PASS = you got Guppi)
+├── DIRECT_DML_TRIPWIRE_V  -- RULE-028/029 detective control: ungoverned writes, keyed on QUERY_TAG
+├── NARRATIVE_TEMPLATE_ADOPTION_V -- narratives with no template (undefined render structure when shared)
 ├── CREATE_ARTIFACT proc   -- the SINGLE gated write path (gap-free IDs; direct INSERT revoked)
 ├── ADVANCE_STAGE proc     -- universal stage gate
 ├── SUBMIT_INITIATIVE proc -- queue work for Rocky
 ├── ROCKY_EXECUTE proc     -- Rocky's per-cycle handler
 ├── PUBLISH_ARTIFACT proc  -- register a launchable
+├── RETAG_PRODUCT proc     -- governed PRODUCT_ID change (admin) — the share boundary
+├── RESYNC_ID_SERIES proc  -- forward-only ID counter repair (admin)
 ├── STEWART_AUDIT proc     -- read-only grounding/hygiene scan (writes one AUDIT artifact)
 ├── PROPOSE_CORRECTION proc -- file a fix proposal as a STORY (never auto-applied)
 ├── GET_ARTIFACT_LAUNCH    -- resolve to URL/identifier (presigned + audited)
