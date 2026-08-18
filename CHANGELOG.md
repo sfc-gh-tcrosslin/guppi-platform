@@ -2,6 +2,31 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.21.1] — 2026-08-18
+
+### Fix — SDLC preflight sweep: five genuine drift items
+
+Ran the full 16-check preflight rather than spot-checking. Every failure below was real.
+
+- **Check 13.3 — rules drift.** `TMG-003` (violation open >14 days without acknowledgment) existed **live** and in `seeds/_legacy_v2/` but was missing from `seeds/engine/02_rules.sql`, so a fresh install silently lacked it. Promoted back into the engine seed.
+- **Check 13.5/13.7 — RULE-018 violations.** Three artifacts used **local file paths** as launch targets, resolving on exactly one laptop. One of them (a customer-facing rendering) was repaired the governed way: bytes staged to `@ARTIFACT_ASSETS`, republished as a new APP, original superseded via `MERGE_ARTIFACTS` (supersede-don't-destroy); launch now returns a real presigned URL. `snowcycle-app-003/004` still point into another user's home directory — the bytes are unreachable, so these need their author.
+- **Check 15 — plan-to-wheel.** Both recent plans were orphans on disk. Published as `NAR-99` (desktop-to-wheel capture, INIT-78) and `NAR-98` (Bond/ArcticMem, INIT-110). The first is this release's own architecture plan — a RULE-013 miss by the agent that built the RULE-013 enforcement.
+- **Check 11 — skill registry.** 86 local skills vs 78 registry rows. The sync script *also* broke under the new RBAC posture: it writes with the connection's default role, now `GUPPIWHEEL_CONTRIBUTOR`, which lacked INSERT on `SKILL_REGISTRY.PUBLIC.SKILLS`. Granted there — a separate database from the wheel substrate, so no wheel write path is reopened — then synced (15 inserted, 65 updated, 93 rows). Documented the grant prerequisite and the script's real path (under `plugins/`, not `skills/`).
+- **Check 12 — Bond.** No entries despite substantive decisions. Wrote two: govern-by-grant-not-role-introspection, and the sandbox WebGL two-variant rule.
+
+**`NARRATIVE_TEMPLATE_ADOPTION_V` over-flagged its own author.** Publishing the two plan narratives made the new 8th check FAIL. Launch-pointer narratives render from a **staged asset**, so template sections do not apply — that is `CREATE_ARTIFACT`'s documented behavior, not a violation. Added a deliberately narrow `LAUNCH-POINTER` cohort requiring `metadata.launch.stage_path`, so the bytes must actually live in the wheel to qualify. `NEW` still gates and still means the genuinely broken case: **no template AND no staged render** — no defined structure and nothing shareable. Conformance back to 8/8 with zero `NEW`.
+
+
+### Security/Confidentiality — customer names out of source (the tripwire published its own watchlist)
+
+`PRODUCT_SHARE_LEAK_V` matched customer names via a **hardcoded `RLIKE` literal in the view body**. So the share-leak tripwire published the very customer list it existed to protect — tolerable while this repo was private, a real problem now that it is public.
+
+- **New `CUSTOMER_SUBJECT_TERMS` table** (governance-as-data), **seeded EMPTY** — each install populates its own terms; no customer names ship in this repo. `PRODUCT_ID` is nullable because a prospect may have no product row yet. Contributor-curatable, like `PRODUCTS`.
+- **`PRODUCT_SHARE_LEAK_V` rewritten** to `EXISTS` against that table. Verified **exactly equivalent** on the origin account before/after: 41 artifacts matched by both, 0 missed, 0 extra. Detection is unchanged; only the names moved.
+- **Side benefit:** onboarding a customer to the watchlist is now an INSERT, not a code change and reseed.
+- **Caveat, stated plainly:** with an empty table the row-level half matches nothing, so `no-share-leak` passes trivially on a fresh install. Populate the table before relying on the check.
+- Also genericized the two remaining name references in live source (a `TYPE_REGISTRY` ID-prefix example and a `BOB_EXECUTE` usage example). Historical CHANGELOG entries below still name accounts; git history retains them regardless, so removing those would require a history rewrite — not done here.
+
 ## [3.21.0] — 2026-08-18
 
 ### Feature/Fix — Governed repair doors + drift control: close the reasons to hand-write DML

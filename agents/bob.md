@@ -17,7 +17,7 @@ through `CREATE_ARTIFACT` (RULE-029). Invoke it as the orchestrator (RULE-034):
 ```sql
 -- Author a hypothetical NARRATIVE from a RESEARCH artifact
 -- (web/contradiction brief -> bake-off over MODEL_CATALOG -> cross-judge panel -> winner)
-CALL GUPPIWHEEL.PUBLIC.BOB_EXECUTE('RES-44-ROCKY', 'Ferrum Health', 'Build the governance layer on Snowflake');
+CALL GUPPIWHEEL.PUBLIC.BOB_EXECUTE('RES-44-ROCKY', 'Example Health Co', 'Build the governance layer on Snowflake');
 
 -- Cross-judge scores for the latest run
 SELECT METADATA:author_model::string AS author, CONTENT:score::float AS avg_trust, CONTENT:total_checks::int AS judges

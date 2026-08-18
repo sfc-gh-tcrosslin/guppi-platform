@@ -2033,4 +2033,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RETAG_PRODUCT(VARCHAR, VARCHAR, VARCH
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.21.0', 'Governed repair doors + drift control: RETAG_PRODUCT and RESYNC_ID_SERIES close the last reasons to hand-write DML on the substrate; DIRECT_DML_TRIPWIRE_V detects ungoverned writes via QUERY_TAG; NARRATIVE_TEMPLATE_ADOPTION_V exposes untemplated narratives and gates conformance as an 8th check; lifecycle hook enforces artifact-before-deliverable; wheel skill gains the capture verb', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.21.1', 'SDLC preflight sweep fixes: restore TMG-003 to the engine seed (was live-only, so fresh installs lacked it); RULE-018 launch repair via MERGE_ARTIFACTS; publish orphan plans; skill-registry sync grant + corrected script path; NARRATIVE_TEMPLATE_ADOPTION_V gains a narrow LAUNCH-POINTER cohort so launch-pointer narratives are not false-flagged', FALSE);

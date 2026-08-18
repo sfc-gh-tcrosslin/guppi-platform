@@ -377,7 +377,7 @@ USING (
     ('INITIATIVE','A unit of intended value: a hypothesis to pursue. Root of a work tree; Rocky researches it and epics/stories hang under it.','INIT-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
     ('EPIC','A large body of work grouping related stories under an initiative.','E-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
     ('RESEARCH','Synthesis/findings (often produced by Rocky) that ground an initiative before building.','RES-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.','product-scoped: ENTITY=STORY_<PRODUCT> (PLAT-, ADONIS-, F6-, S-, ...)','workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Published',FALSE,'','',FALSE,NULL,TRUE),
+    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.','product-scoped: ENTITY=STORY_<PRODUCT> (PLAT-, F6-, S-, ...)','workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Published',FALSE,'','',FALSE,NULL,TRUE),
     ('NARRATIVE','A published, launchable write-up (plan, story, briefing) rendered to HTML in the wheel.','NAR-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',FALSE,NULL,FALSE),
     ('APP','A launchable application registered in the wheel (identifier/url/stage_path in metadata.launch).','APP-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
     ('MODEL','A launchable ML model registered in the wheel.','APP- (minted in the APP series)','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
@@ -512,15 +512,48 @@ WHERE PRODUCT_ID = 'guppi' AND SUPERSEDED_BY IS NULL;
 --        Keys on SUBJECT, not topical tags, so platform roadmap stories that merely mention a
 --        customer (e.g. "onboard FIMR") are NOT flagged.
 --   field: a guppi artifact still carrying an internal key in CONTENT (would ride into the share).
-CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V AS
-SELECT ID, PRODUCT_ID, 'customer-subject in guppi product' AS leak, LEFT(TITLE,60) AS detail
-FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
-WHERE PRODUCT_ID='guppi'
-  AND UPPER(TITLE || ' ' || COALESCE(CONTENT:target::string,'')) RLIKE '.*(FERRUM|ADONIS|MEDUIT|MISSISSIPPI|MCKESSON|DEEPHEALTH|ABARCA).*'
+-- CUSTOMER_SUBJECT_TERMS — the customer/prospect name terms PRODUCT_SHARE_LEAK_V matches on.
+--
+-- These were previously a hardcoded RLIKE literal inside the view. That meant the share-leak
+-- tripwire PUBLISHED the very customer list it existed to protect — fine while the plugin repo was
+-- private, a confidentiality problem the moment it is public. Moving them to data fixes that and
+-- removes the code change previously needed to onboard each new customer.
+--
+-- SEEDED EMPTY ON PURPOSE. Each install populates its own terms; no names live in this repo.
+-- A term need not have a PRODUCTS row (a prospect may have no product yet), so PRODUCT_ID is
+-- nullable. Contributor-curatable reference data, like PRODUCTS.
+--
+--   INSERT INTO GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS (TERM, PRODUCT_ID, NOTES)
+--   VALUES ('<CUSTOMER>', '<product_id or NULL>', 'why this term is tracked');
+--
+-- NOTE: with an empty table the row-level half of PRODUCT_SHARE_LEAK_V matches nothing, so the
+-- no-share-leak conformance check passes trivially. That is intentional for a fresh install with no
+-- customer work in it — but populate this table before relying on the check.
+CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS (
+  TERM        VARCHAR(120) NOT NULL PRIMARY KEY,
+  PRODUCT_ID  VARCHAR(60),
+  NOTES       VARCHAR(500),
+  ACTIVE      BOOLEAN DEFAULT TRUE,
+  CREATED_AT  TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Customer/prospect name terms used by PRODUCT_SHARE_LEAK_V to detect a customer-subject artifact on the SHARED guppi product boundary (STO-SUBSTRATE-8). Governance-as-data; previously a hardcoded RLIKE literal in the view, which published the customer list the tripwire existed to protect. Seeded EMPTY - each install populates its own terms. PRODUCT_ID nullable (a prospect may have no product yet).';
+
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V
+COMMENT = 'Share-boundary tripwire (STO-SUBSTRATE-8). Flags (a) an artifact on the SHARED guppi product whose SUBJECT is a customer/prospect, and (b) a guppi artifact still carrying an internal-only key that would ride into the share. Customer terms come from CUSTOMER_SUBJECT_TERMS (governance-as-data). Keys on SUBJECT (title / CONTENT:target), not topical mentions. Must be 0 rows.'
+AS
+SELECT a.ID, a.PRODUCT_ID, 'customer-subject in guppi product' AS leak, LEFT(a.TITLE,60) AS detail
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.PRODUCT_ID = 'guppi'
+  AND EXISTS (
+        SELECT 1 FROM GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS t
+        WHERE t.ACTIVE
+          AND UPPER(a.TITLE || ' ' || COALESCE(a.CONTENT:target::string,'')) LIKE '%' || UPPER(t.TERM) || '%'
+      )
 UNION ALL
-SELECT ID, PRODUCT_ID, 'internal key in shared CONTENT', LEFT(TITLE,60)
-FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
-WHERE PRODUCT_ID='guppi' AND (CONTENT:strategic_note IS NOT NULL OR CONTENT:internal IS NOT NULL);
+SELECT a.ID, a.PRODUCT_ID, 'internal key in shared CONTENT', LEFT(a.TITLE,60)
+FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
+WHERE a.PRODUCT_ID = 'guppi'
+  AND (a.CONTENT:strategic_note IS NOT NULL OR a.CONTENT:internal IS NOT NULL);
 
 -- NARRATIVE_CONFORMANCE_V — E-014 go-forward tripwire. Lists template-STAMPED narratives that
 -- violate their declared template (missing/empty required section, or an unknown template).
@@ -693,6 +726,7 @@ GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.VIOLATIONS TO ROLE GUPPIWHEEL_CONTRIBUTO
 GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.ARTIFACT_LAUNCHES TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- proc-written
 GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- proc-written stage-change log
 GRANT INSERT, UPDATE ON TABLE GUPPIWHEEL.PUBLIC.PRODUCTS TO ROLE GUPPIWHEEL_CONTRIBUTOR;  -- product registry: contributors curate (reference data, not doctrine)
+GRANT INSERT, UPDATE, DELETE ON TABLE GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS TO ROLE GUPPIWHEEL_CONTRIBUTOR;  -- share-leak terms: reference data, not doctrine
 GRANT READ, WRITE ON STAGE GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 -- NOTE: contributors are intentionally NOT granted direct DML on ID_CONVENTIONS, PLUGIN_VERSION,
 -- INITIATIVE_STEPS (Rocky/agent log, OWNER-written), or GUPPI_TOUCH_WATCH. Sequence/version/log
