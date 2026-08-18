@@ -311,7 +311,7 @@ Added a Tier 2 (suggestive) section to `COCO.md` for installs that don't want to
 
 ### Feature — bundled `snowflake-mcp` skill (server + client MCP patterns)
 
-Added a reusable skill capturing the Snowflake-managed MCP playbook, so building/consuming MCP servers is twice-learned, not re-learned. Born out of the Adonis RCM MVP build.
+Added a reusable skill capturing the Snowflake-managed MCP playbook, so building/consuming MCP servers is twice-learned, not re-learned. Born out of an RCM MVP build.
 
 - **`skills/snowflake-mcp/SKILL.md`** — SERVER: `CREATE MCP SERVER` over Cortex Analyst (semantic views, not model files), Cortex Search, Agents, UDFs/procs; the "grant the server AND each tool object" rule; sessions use `DEFAULT_ROLE` (no secondary roles) so RLS flows through; hyphens-not-underscores; read-only posture. CLIENT: JSON-RPC `tools/list`/`tools/call`; the **exact** parse everyone gets wrong — `CORTEX_ANALYST_MESSAGE` returns `content[].text` as a JSON string → array, with `obj.statement` (SQL), `obj.text` (answer), `obj.suggestions`; SQL-API execution + async polling; client-side read-only guardrail; "don't stringify-regex the response" trap.
 - Auto-discovered via the existing `"skills": ["./skills"]` manifest entry; no engine/DDL change (seed engine version stays 3.8.1).
@@ -339,7 +339,7 @@ Formalized `guppi` as a controlled product and made `PRODUCT_ID` the reusable pe
 
 - **`ARTIFACTS.PRODUCT_ID`** (new, FK to `PRODUCTS`) — the controlled membership / share boundary, replacing the folksonomy `guppi` tag. Self-heal `ALTER ... ADD COLUMN IF NOT EXISTS` for existing installs.
 - **`PRODUCTS` `platform` → `guppi`** (singular umbrella; bootstrap seeds the `guppi` product on fresh installs).
-- **Membership derived + human-reviewed** — 59 self-meta artifacts stamped `PRODUCT_ID='guppi'` (EPIC-SUBSTRATE/INIT-36/INIT-46 spine + platform/guppi tags + changelog narratives), with customer-subject artifacts (Ferrum bake-off audits, Adonis research) hard-excluded.
+- **Membership derived + human-reviewed** — 59 self-meta artifacts stamped `PRODUCT_ID='guppi'` (EPIC-SUBSTRATE/INIT-36/INIT-46 spine + platform/guppi tags + changelog narratives), with customer-subject artifacts (customer bake-off audits, customer research) hard-excluded.
 - **Two-dimensional confidentiality:** row (`PRODUCT_ID`) + field (an `internal` namespace the share never projects). `GUPPI_SHARE_V` now filters `PRODUCT_ID='guppi'` and strips `CONTENT:internal`/`strategic_note`, omitting raw `METADATA`. Migrated `NAR-34.CONTENT:strategic_note` → `METADATA:internal`.
 - **`PRODUCT_SHARE_LEAK_V`** (new) — confidentiality tripwire keyed on *subject* (CONTENT:target/title), added to `GUPPI_CONFORMANCE_V` (now 5 checks, all PASS). Won't false-positive roadmap stories that mention a customer.
 - **`CREATE_ARTIFACT` stamps `PRODUCT_ID`** from a validated `P_PRODUCT` — artifacts are born-bucketed (perpetuation). Bob's bake-off audits now use NULL product (customer-subject, not guppi).
@@ -356,7 +356,7 @@ The missing seat in the cast: Cowork (Initiate) -> Rocky (Research) -> **Bob (Bu
 - **`BOB_EXECUTE`** proc (`EXECUTE AS OWNER`) — assembles grounding (parent RESEARCH + Guppi + Bond + the web brief), authors the same narrative across **all enabled `MODEL_CATALOG` models** via `AI_COMPLETE`, then runs a **cross-judge panel** (every candidate scored by every *other* model — **no model judges its own work**, RULE-023), writes one in-wheel `AUDIT` per candidate (`TARS_AUDITS_V`), and writes the highest-average-trust winner as a `NARRATIVE` with provenance. Mirrors the Rocky agent+proc pattern; writes via `CREATE_ARTIFACT`.
 - **`MODEL_CATALOG`** (minimal STO-36-B) — enabled models for the bake-off; adding/removing a model is a row, never code. Seeded with the verified-callable set (claude-sonnet-4-5, openai-gpt-4.1, llama3.3-70b, mistral-large2).
 - **`RULE-023`** — foundation-model agnosticism: model choice is an auditable, evidence-based decision.
-- First run on `RES-44` (Ferrum): winner claude-sonnet-4-5 (avg trust 0.85) over mistral (0.81), gpt-4.1 (0.81), llama (0.76); 3 independent judges each; zero self-judge violations; conformance gate 4/4 PASS. Uses `AI_COMPLETE` (not the deprecated `SNOWFLAKE.CORTEX.COMPLETE`).
+- First run on `RES-44`: winner claude-sonnet-4-5 (avg trust 0.85) over mistral (0.81), gpt-4.1 (0.81), llama (0.76); 3 independent judges each; zero self-judge violations; conformance gate 4/4 PASS. Uses `AI_COMPLETE` (not the deprecated `SNOWFLAKE.CORTEX.COMPLETE`).
 - v1 stops at the NARRATIVE artifact; HTML rendering reuses the validated `static_html -> @ARTIFACT_ASSETS -> GET_ARTIFACT_LAUNCH` path.
 
 ## [3.6.0] — 2026-06-15
@@ -402,7 +402,7 @@ Shipped the first INIT-36 sub-agent and the dry run for the orchestrator/sub-age
 
 Made "no duplicate artifact IDs" a real, enforced invariant before INIT-36. A TARS-FULL audit found 31 duplicate IDs in the `ARTIFACTS` SSOT — including `INIT-36` held by 5 different initiatives after a batch load bypassed the (non-atomic, stale) `ID_CONVENTIONS` counter. Root cause: Snowflake does not enforce `PRIMARY KEY`/`UNIQUE` on standard tables, and there was no single write path.
 
-- **Dedup**: removed 19 exact-duplicate rows; re-IDed 15 divergent collisions (canonical row keeps the ID; childless colliders get fresh IDs — e.g. the 4 mis-loaded Adonis initiatives → `INIT-38..41`). Split `E-013` into Core Platform (`E-013`) + ETHOS (`E-21`) with children re-parented. Result: 394 rows = 394 distinct IDs.
+- **Dedup**: removed 19 exact-duplicate rows; re-IDed 15 divergent collisions (canonical row keeps the ID; childless colliders get fresh IDs — e.g. the 4 mis-loaded customer initiatives → `INIT-38..41`). Split `E-013` into Core Platform (`E-013`) + ETHOS (`E-21`) with children re-parented. Result: 394 rows = 394 distinct IDs.
 - **`CREATE_ARTIFACT`** (new, `03_procs.sql`): the single gated write path. Registry-driven, gap-free atomic allocation from `ID_CONVENTIONS` keyed by `(TYPE, PRODUCT)`; dual-mode (auto-allocate or uniqueness-checked explicit ID); validates `TYPE`/`STAGE` domains. `EXECUTE AS OWNER` per RULE-028.
 - **Registry**: `ID_CONVENTIONS` gains `ID_PREFIX`; introducing a convention = adding a row (honored automatically). Allocation is a gap-free atomic counter (not Snowflake sequences, which leave large gaps in human-referenced IDs).
 - **Lockdown**: revoked direct `INSERT` on `ARTIFACTS` from `GUPPIWHEEL_ADMIN` (admin keeps UPDATE/DELETE for surgery); informational `PRIMARY KEY`; `DUPLICATE_ID_SCREAM_V` tripwire.
