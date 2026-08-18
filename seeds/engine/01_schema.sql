@@ -548,9 +548,15 @@ WHERE a.TYPE = 'NARRATIVE' AND a.SUPERSEDED_BY IS NULL AND a.CONTENT:template IS
 -- inconsistency people hit when they go to SHARE a narrative. This view exposes that population.
 -- Cohorts: LEGACY (pre-cutoff, grandfathered), MIGRATED (metadata.migrated_from set — legacy content
 -- re-created through the chokepoint; forcing it into a template would rewrite the original author's
--- work, so it is grandfathered too), NEW (must fix). Only NEW gates conformance.
+-- work, so it is grandfathered too), LAUNCH-POINTER (renders from a staged asset — a .plan.md, PDF, or
+-- hand-built deck — so template sections do not apply; this is CREATE_ARTIFACT's documented behavior
+-- for launch-pointer narratives), NEW (must fix). Only NEW gates conformance.
+--
+-- NEW is the genuinely broken case: no template AND no staged render, i.e. no defined structure and
+-- nothing shareable. The LAUNCH-POINTER carve-out is deliberately narrow — it requires
+-- metadata.launch.stage_path, which means the bytes were actually captured into the wheel (RULE-018).
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.NARRATIVE_TEMPLATE_ADOPTION_V
-COMMENT = 'Render-contract visibility (E-014 follow-on). Exposes narratives with NO CONTENT:template, which NARRATIVE_CONFORMANCE_V cannot see. Cohorts: LEGACY (grandfathered), MIGRATED (metadata.migrated_from — legacy content re-created through the chokepoint, grandfathered), NEW (must fix). Only NEW gates conformance.'
+COMMENT = 'Render-contract visibility (E-014 follow-on). Exposes narratives with NO CONTENT:template, which NARRATIVE_CONFORMANCE_V cannot see. Cohorts: LEGACY (grandfathered), MIGRATED (metadata.migrated_from — legacy content re-created through the chokepoint, grandfathered), LAUNCH-POINTER (renders from a staged asset such as a .plan.md/.pdf/hand-built deck, so template sections do not apply — CREATE_ARTIFACT documented behavior), NEW (must fix: no template AND no staged render = no defined structure and unshareable). Only NEW gates conformance.'
 AS
 SELECT
   a.ID,
@@ -560,6 +566,7 @@ SELECT
   CASE
     WHEN a.METADATA:migrated_from IS NOT NULL       THEN 'MIGRATED (legacy content)'
     WHEN a.CREATED_AT < '2026-08-16'::timestamp_ntz THEN 'LEGACY (grandfathered)'
+    WHEN a.METADATA:launch:stage_path IS NOT NULL   THEN 'LAUNCH-POINTER (renders from staged asset)'
     ELSE 'NEW (must fix)'
   END AS cohort,
   IFF(a.CONTENT:body_md IS NOT NULL, 'body_md fallback', 'no body_md - normalizer fallback') AS render_path,

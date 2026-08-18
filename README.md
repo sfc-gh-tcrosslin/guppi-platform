@@ -92,6 +92,36 @@ The upgrade script:
 
 It does **NOT** touch your ARTIFACTS rows beyond TYPE/STAGE normalization. Your initiatives, briefs, and audits remain.
 
+## Upgrade to 3.21.0 (from any 3.x)
+
+```bash
+git pull
+# Engine seeds are CREATE OR REPLACE / MERGE — safe to re-run.
+# 01_schema.sql adds DIRECT_DML_TRIPWIRE_V + NARRATIVE_TEMPLATE_ADOPTION_V and the 8th
+# conformance check; 03_procs.sql adds RETAG_PRODUCT + RESYNC_ID_SERIES and self-heals
+# the version stamp.
+snow sql -f seeds/engine/01_schema.sql
+snow sql -f seeds/engine/03_procs.sql
+
+# Then run the post-upgrade audit (read-only; additive migration, RULE-019)
+snow sql -f seeds/upgrades/3.20.1-to-3.21.0.sql
+```
+
+Additive only — no artifact rows are rewritten. The audit in the migration reports four
+things worth acting on:
+
+- **`GUPPI_CONFORMANCE_V`** now has 8 checks (was 7). Every row must read PASS.
+- **`DIRECT_DML_TRIPWIRE_V`** — ungoverned writes to the substrate. On an established
+  account expect historical rows; they are forensics, not a blocker.
+- **`NARRATIVE_TEMPLATE_ADOPTION_V`** — untemplated narratives. A large `LEGACY` cohort is
+  normal and grandfathered; only `NEW (must fix)` gates conformance.
+- **Latent counter drift** — any ID series whose `NEXT_SEQ` has fallen at or below the max
+  live ID *will re-issue an ID that is already in use* on the next allocation. Repair each
+  with `CALL GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES('<ENTITY>', '<reason>')`. This query found
+  six additional desynced series on the origin account beyond the one already known, so it
+  is worth running even if nothing looks broken.
+
+
 ## What you get
 
 ```

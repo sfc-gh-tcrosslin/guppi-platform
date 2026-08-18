@@ -136,6 +136,14 @@ USING (
      'warn', FALSE,
      'Initiative at Initiate >7 days without research started — going cold'),
 
+    -- TMG-003 existed live (and in seeds/_legacy_v2) but was missing from this file, so a
+    -- fresh install silently lacked it. Promoted back into the engine seed 2026-08-18 via
+    -- preflight Check 13.3 (live rules vs seed rules).
+    ('TMG-003', 'timing', 'ALL', NULL, NULL,
+     'NOT EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.VIOLATIONS WHERE ARTIFACT_ID = :artifact_id AND STATUS = ''open'' AND DATEDIFF(''day'', DETECTED_AT, CURRENT_TIMESTAMP()) > 14)',
+     'warn', FALSE,
+     'Violation open >14 days without acknowledgment — needs attention'),
+
     ('RULE-029', 'platform', 'ALL', NULL, NULL,
      'TRUE', 'block', FALSE,
      'Artifact IDs are globally unique. CREATE_ARTIFACT is the SINGLE write chokepoint: the only procedure that INSERTs into ARTIFACTS, allocating gap-free IDs atomically from ID_CONVENTIONS (or accepting a de-duped explicit ID) and refusing existing IDs. Every other write proc — SUBMIT_INITIATIVE, PUBLISH_ARTIFACT, ROCKY_EXECUTE, STEWART_AUDIT, PROPOSE_CORRECTION, BOB_EXECUTE — validates/shapes its payload then DELEGATES the INSERT by CALLing CREATE_ARTIFACT (no direct INSERT of their own). CREATE_ARTIFACT exposes an all-scalar surface (P_CONTENT/P_TAGS/P_METADATA are JSON strings) so Cortex agent generic tools over a warehouse can call it directly. Direct INSERT on ARTIFACTS is revoked from all roles except the table owner. Enforced by single write path + DUPLICATE_ID_SCREAM_V tripwire (Snowflake does not enforce PK/UNIQUE).'),

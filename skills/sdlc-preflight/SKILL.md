@@ -215,7 +215,26 @@ Every local skill (including sub-skills) must have a corresponding row in `SKILL
 
 **Fix:** Run the sync script:
 ```bash
-SNOWFLAKE_CONNECTION_NAME=YourConnection python3 ~/.snowflake/cortex/skills/skill-registry-collaborator/sync_skills.py
+SNOWFLAKE_CONNECTION_NAME=YourConnection python3 \
+  ~/.snowflake/cortex/plugins/guppi-platform/skills/skill-registry-collaborator/sync_skills.py
+```
+
+**Path note:** the script lives under the *plugin* tree
+(`~/.snowflake/cortex/plugins/guppi-platform/skills/...`), NOT
+`~/.snowflake/cortex/skills/...`. It *reads* `~/.snowflake/cortex/skills` (its `SKILLS_DIR`)
+but is not installed there.
+
+**Privilege prerequisite (added 2026-08-18):** the script writes with the connection's
+DEFAULT role. Since the orchestrator posture sets that to `GUPPIWHEEL_CONTRIBUTOR`
+(RULE-034, no standing DML), the sync fails with
+`Insufficient privileges to operate on table 'SKILLS'` unless the role can write the
+registry. `SKILL_REGISTRY` is a separate database from the wheel substrate, and publishing
+skills is contributor work (analogous to `PRODUCTS`), so grant it there — this does NOT
+reopen any wheel write path:
+```sql
+GRANT USAGE ON DATABASE SKILL_REGISTRY TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT USAGE ON SCHEMA SKILL_REGISTRY.PUBLIC TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+GRANT SELECT, INSERT, UPDATE ON TABLE SKILL_REGISTRY.PUBLIC.SKILLS TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 ```
 
 **Pass criteria:** Local SKILL.md count equals DB row count (excluding the duplicate synthetic-data-generator version row).
