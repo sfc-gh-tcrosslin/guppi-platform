@@ -37,7 +37,7 @@ GuppiWheel is the flywheel that tracks the full lifecycle of value creation. One
 ```sql
 GUPPIWHEEL.PUBLIC.ARTIFACTS
 ├── ID          VARCHAR(36) PK — UUID or readable slug (e.g., 'ab-init-001')
-├── TYPE        VARCHAR(20) — initiative, research, story, app, model, hero, narrative, skill, audit, defect, memory, ops_event
+├── TYPE        VARCHAR(20) — initiative, research, story, app, model, hero, narrative, skill, audit, defect, memory, ops_event, widget
 ├── STAGE       VARCHAR(20) — Initiate, Research, Building, Built, Published
 ├── PARENT_ID   VARCHAR(36) — lineage: what produced this artifact
 ├── TITLE       VARCHAR(500)
@@ -91,8 +91,9 @@ and do **not** hand-assign IDs — the registry allocates them.
 > **⚠️ Running Rocky = `SUBMIT_INITIATIVE` only (RULE-032, PLAT-D5).** Rocky is a server-side Cortex Agent (`ROCKY_TASK` polls every 5 min). Do **NOT** spawn a local `rocky` task subagent to research — it has no queue access, is unscoped, hits the ~25-min background cap, and writes nothing. On any Rocky miss/timeout, **re-enqueue and report** — never hand-author the RESEARCH artifact yourself (Rocky's output is SYSTEM-owned, `RES-{N}-ROCKY`; writing `RES-N` as a user is a governance leak). A Pass-2 on an already-`Built` initiative is a **fresh `SUBMIT_INITIATIVE`**.
 | A **launchable** (NARRATIVE/APP/MODEL/DASHBOARD with a launch spec) | `PUBLISH_ARTIFACT(...)` | Something a human opens. |
 | **Anything else** (RESEARCH, STORY, EPIC, OUTCOME, AUDIT…) | `CREATE_ARTIFACT(P_TYPE, P_TITLE, P_PRODUCT, P_CONTENT, P_PARENT_ID, P_STAGE, P_TAGS, P_EXPLICIT_ID, P_METADATA)` | Under a parent. Pass `P_CONTENT`/`P_METADATA`/`P_TAGS` as **JSON STRINGS** (`TO_JSON(OBJECT_CONSTRUCT(...))`). Leave `P_EXPLICIT_ID` empty. |
+| A **WIDGET** (governed pointer to a reusable building block — a proc/UDF/HTML pattern/python) | `CREATE_ARTIFACT('WIDGET', P_TITLE, P_PRODUCT, P_CONTENT, P_PARENT_ID, ...)` | Global **`W-`** series. The artifact **points to** a canonical impl; it does **not** contain it. See "WIDGET — the single-source rule" below. |
 
-**Stages are per-type.** Most types start at `Initiate`; a few differ — **OUTCOME** uses `ASPIRATIONAL → SELECTED → TRACKED → RESOLVED`, **DEFECT** starts at `Research`. As of **3.17.1**, `CREATE_ARTIFACT` defaults `P_STAGE` to the type's first registry stage (so OUTCOME → `ASPIRATIONAL` automatically) and **rejects a stage that isn't in that type's lifecycle**. Example:
+**Stages are per-type.** Most types start at `Initiate`; a few differ — **OUTCOME** uses `ASPIRATIONAL → SELECTED → TRACKED → RESOLVED`, **DEFECT** starts at `Research`, **WIDGET** uses `Draft → Published → Deprecated`. As of **3.17.1**, `CREATE_ARTIFACT` defaults `P_STAGE` to the type's first registry stage (so OUTCOME → `ASPIRATIONAL` automatically) and **rejects a stage that isn't in that type's lifecycle**. Example:
 ```sql
 CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
   'OUTCOME', '<title>', NULL, '<content json>', '<parent_id>',
@@ -115,6 +116,21 @@ Mixing both? Put prose under a `body_md` key alongside your structured keys. The
 ### IDs / product scoping
 - Global series (INITIATIVE→`INIT-N`) and product-scoped STORY series live in `ID_CONVENTIONS`. STORY is `ID_PRODUCT_SCOPED` → entity `STORY_<PRODUCT>`.
 - **Platform/guppi tooling stories** use the `PLAT-N` series via an **explicit** `P_EXPLICIT_ID='PLAT-N'` with product `guppi` (the `STORY_GUPPI` series is unregistered — documented quirk; follow precedent, don't invent a new series mid-task).
+
+### WIDGET — the single-source rule
+A WIDGET is a **governed catalog entry that points to a reusable building block** (a proc, UDF, HTML pattern, python module, …) living anywhere in the account. The artifact carries the metadata; the impl lives in a library home (e.g. `GUPPI_LIB.LIB`) and is **referenced, not shipped in this plugin**.
+
+**Content contract** (`P_CONTENT` JSON object):
+```
+{ "kind": "udf|proc|html|python|sql|...",
+  "pointer": { "location_type": "snowflake_object|stage|repo", "ref": "<FQN or path>" },
+  "signature": "<callable signature>",
+  "inputs": [...], "outputs": [...], "requires": [...],
+  "usage": "<how to call it>", "notes": "...", "version": "<semver>",
+  "provenance": "<who built it / under which artifact>" }
+```
+
+**The rule (enforce this):** **one physical implementation + one WIDGET artifact.** A widget may appear in *many* contexts — never as a copy. Multi-surfacing is done with **tags + the pointer**, not duplication. Example: `W-1` (PARSE_DICOM) is tagged `imaging-dicom` **and** `guppi-showcase`, so it surfaces in the imaging catalog and the platform showcase from **one** row over **one** impl (`GUPPI_LIB.LIB.PARSE_DICOM`). Packaging: the owner of the canonical impl (core guppi = library steward) maintains it; domain packs **declare a dependency and reference the pointer** — they must not re-bundle the code.
 
 ### ⚠️ THE DEDUP RULE (RULE-031 — no unilateral dup-override)
 `SUBMIT_INITIATIVE` HOLDs when a new initiative is `AI_SIMILARITY >= 0.80` to a live one, returning:

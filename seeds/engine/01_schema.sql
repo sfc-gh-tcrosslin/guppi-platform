@@ -387,7 +387,8 @@ USING (
     ('AUDIT','A read-only grounding/hygiene scan record (e.g., Stewart). System-generated; UUID IDs.','(UUID)','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
     ('OPS_EVENT','An operational event / status marker (e.g., a product status snapshot).','OPS-<slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
     ('OUTCOME','A measurable target tracked against the real world. A pointer (snowflake_path / app_metric / external_url) must resolve to live data or an explicit human sign-off before RESOLVED.','OUT-','outcome','ASPIRATIONAL,SELECTED,TRACKED,RESOLVED',FALSE,'INIT-37','Distinct 4-stage lifecycle (STG-005); the standard Initiate->Published stages do NOT apply.',FALSE,NULL,FALSE),
-    ('SKILL','A registered capability/recipe skill in the plugin.','<freeform slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE)
+    ('SKILL','A registered capability/recipe skill in the plugin.','<freeform slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
+    ('WIDGET','A reusable building block (proc/UDF/SQL/python/HTML pattern/notebook/flow/semantic view) governed as an artifact but POINTING to where the implementation lives (content.pointer.ref). Composable by builder-Bob and the plugin. Default implementations home = GUPPI_LIB.LIB.','W-','standard','Draft,Published,Deprecated',FALSE,'GUPPI-widget','Global W- series. Catalog metadata here; implementation lives at content.pointer.ref (GUPPI_LIB.LIB.<obj> or @GUPPI_LIB.LIB.WIDGET_FILES/<path> or file/repo/url). PRODUCT_ID tags domain.',FALSE,'WIDGET',FALSE)
 ) s
 ON t.TYPE = s.TYPE
 WHEN MATCHED THEN UPDATE SET PURPOSE=s.PURPOSE, ID_PREFIX=s.ID_PREFIX, LIFECYCLE=s.LIFECYCLE,

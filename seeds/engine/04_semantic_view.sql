@@ -31,7 +31,7 @@ CREATE OR REPLACE SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
       COMMENT = 'Unique artifact identifier',
     artifacts.artifact_type AS TYPE
       WITH SYNONYMS = ('type', 'kind', 'category')
-      COMMENT = 'One of the 14 canonical types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL. Definitions/lifecycles are authoritative in TYPE_REGISTRY (joined) - see the PURPOSE/LIFECYCLE/TYPE_STAGES dimensions.',
+      COMMENT = 'One of the 15 canonical types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL, WIDGET. Definitions/lifecycles are authoritative in TYPE_REGISTRY (joined) - see the PURPOSE/LIFECYCLE/TYPE_STAGES dimensions.',
     artifacts.stage AS STAGE
       WITH SYNONYMS = ('status', 'lifecycle stage')
       COMMENT = 'Standard lifecycle: Initiate, Research, Building, Built, Published. STORY/DEFECT also use SELECTED/RESOLVED/Resolved. OUTCOME uses its own 4-stage lifecycle: ASPIRATIONAL, SELECTED, TRACKED, RESOLVED.',
@@ -75,7 +75,7 @@ CREATE OR REPLACE SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV
 
   COMMENT = 'GuppiWheel — unified value creation engine'
 
-  AI_SQL_GENERATION 'ARTIFACTS is one table with all items; TYPE_REGISTRY (joined on TYPE) holds the canonical type taxonomy. The 14 types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL. For "what is an <TYPE>" or type-definition questions, read TYPE_REGISTRY.PURPOSE / LIFECYCLE / STAGES (do not guess). PARENT_ID traces lineage. CONTENT is VARIANT. METADATA is VARIANT with priority, tagged_users, product, launch. TAGS is ARRAY. Use UPPER(TYPE) for filters. Standard stages: Initiate, Research, Building, Built, Published; OUTCOME uses ASPIRATIONAL, SELECTED, TRACKED, RESOLVED.';
+  AI_SQL_GENERATION 'ARTIFACTS is one table with all items; TYPE_REGISTRY (joined on TYPE) holds the canonical type taxonomy. The 15 types: INITIATIVE, EPIC, RESEARCH, STORY, NARRATIVE, APP, MODEL, DASHBOARD, DEFECT, INCIDENT, AUDIT, OPS_EVENT, OUTCOME, SKILL, WIDGET. For "what is an <TYPE>" or type-definition questions, read TYPE_REGISTRY.PURPOSE / LIFECYCLE / STAGES (do not guess). PARENT_ID traces lineage. CONTENT is VARIANT. METADATA is VARIANT with priority, tagged_users, product, launch. TAGS is ARRAY. Use UPPER(TYPE) for filters. Standard stages: Initiate, Research, Building, Built, Published; OUTCOME uses ASPIRATIONAL, SELECTED, TRACKED, RESOLVED; WIDGET uses Draft, Published, Deprecated.';
 
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV TO ROLE GUPPIWHEEL_VIEWER;
 GRANT REFERENCES, SELECT ON SEMANTIC VIEW GUPPIWHEEL.PUBLIC.GUPPIWHEEL_SV TO ROLE GUPPIWHEEL_CONTRIBUTOR;

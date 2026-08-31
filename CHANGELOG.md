@@ -2,7 +2,23 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.22.0] — 2026-08-31
+
+### Added — WIDGET artifact type (governed pointer to a reusable building block)
+
+A new first-class artifact TYPE, **WIDGET**: a governed catalog entry that POINTS to a reusable building block (proc/UDF/HTML pattern/python/…) living anywhere in the account. The artifact carries metadata only; the implementation lives at `content.pointer.ref` (default library home `GUPPI_LIB.LIB`) and is **referenced, never copied**.
+
+- **Scope is type-only.** No widget *implementations* ship in this plugin — no `GUPPI_LIB` scaffold, no bundled code. The type is documented and made mintable; impls are provisioned in the account and referenced.
+- **Single-source rule.** One physical impl + one WIDGET artifact. A widget surfaces in many contexts via **tags + the pointer**, never as a copy — e.g. `W-1` (PARSE_DICOM) is tagged `imaging-dicom` **and** `guppi-showcase`, appearing in the imaging catalog and the platform showcase from one row over one impl (`GUPPI_LIB.LIB.PARSE_DICOM`). Domain packs declare a dependency and reference the pointer; the library steward (core guppi) maintains the canonical impl.
+- **Seed parity.** `TYPE_REGISTRY` gains the WIDGET row (global `W-` series, stages `Draft → Published → Deprecated`, `ID_SERIES_ENTITY=WIDGET`); `bootstrap.sql` seeds the `WIDGET` id-allocator entity; the semantic view's canonical-type enumeration moves 14 → 15. Existing installs pick up the allocator row via `seeds/upgrades/3.21.1-to-3.22.0.sql` (insert-if-missing; will not reset an advanced counter).
+- **Skill docs.** `skills/guppiwheel/SKILL.md` documents the type, its create-path (`CREATE_ARTIFACT('WIDGET', …)`), the per-type stages, the content contract, and the single-source rule.
+
+### Changed — TARS agent routes live-account audits to the server-side agent
+
+`agents/tars.md` now instructs: for any audit touching the live Snowflake account, call the server-side `GUPPIWHEEL.PUBLIC.TARS_EXECUTE(...)` agent, whose read-only / independent-model / deterministic-aggregate / narrow-write guarantees are enforced **structurally** in Snowflake objects (owned by the powerless `TARS_AUDITOR`/`TARS_WRITER` roles) rather than by advisory prose. The CoCo subagent is retained only for repo/file audits where there is no account data to protect. Traces to INIT-88 (Guppi RSI).
+
 ## [3.21.1] — 2026-08-18
+
 
 ### Fix — SDLC preflight sweep: five genuine drift items
 

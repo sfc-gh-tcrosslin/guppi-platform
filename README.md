@@ -1,6 +1,6 @@
-# guppi-platform v3.21.1
+# guppi-platform v3.22.0
 
-**Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in the wheel.
+**Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel.
 
 > **New here? Read [`COCO.md`](COCO.md) first.** It is the contract: what is invariant (don't alter the guarantee), what is a default (yours to change), what is suggestive (author to taste), and the conformance gate that defines "you got Guppi."
 
@@ -91,6 +91,26 @@ The upgrade script:
 - Updates PLUGIN_VERSION to 3.0.0
 
 It does **NOT** touch your ARTIFACTS rows beyond TYPE/STAGE normalization. Your initiatives, briefs, and audits remain.
+
+## Upgrade to 3.22.0 (from 3.21.x)
+
+```bash
+git pull
+# Engine seeds are CREATE OR REPLACE / MERGE — safe to re-run.
+# 01_schema.sql MERGEs the new WIDGET row into TYPE_REGISTRY; 04_semantic_view.sql
+# bumps the type enumeration 14 -> 15.
+snow sql -f seeds/engine/01_schema.sql
+snow sql -f seeds/engine/04_semantic_view.sql
+
+# Existing installs do NOT re-run bootstrap, so the WIDGET id-allocator row + verify
+# live in the upgrade file (insert-if-missing; will not reset an advanced counter).
+snow sql -f seeds/upgrades/3.21.1-to-3.22.0.sql
+```
+
+Additive only (RULE-019) — no artifact rows are rewritten. Adds the **WIDGET** artifact
+type: a governed pointer to a reusable building block (impl lives at `content.pointer.ref`,
+default `GUPPI_LIB.LIB`, referenced not shipped). Type-only — no widget implementations
+ship in this plugin.
 
 ## Upgrade to 3.21.0 (from any 3.x)
 

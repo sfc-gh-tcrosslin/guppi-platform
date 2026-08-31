@@ -16,7 +16,8 @@ SELECT * FROM VALUES
     ('AUDIT',      1, NULL,    'Descriptive slug-date IDs; not auto-allocated'),
     ('DEFECT',     1, NULL,    'Defects are product-scoped: DEFECT_<PRODUCT> rows registered per product'),
     ('INCIDENT',   1, 'INC-',  'Global INC-N artifact IDs'),
-    ('STORY_STEWART', 1, 'STO-STEWART-', 'Stewart-authored hygiene/correction stories (product-tagged guppi)')
+    ('STORY_STEWART', 1, 'STO-STEWART-', 'Stewart-authored hygiene/correction stories (product-tagged guppi)'),
+    ('WIDGET',      1, 'W-',    'Reusable building-block widgets. Global sequential W-N; implementation lives at content.pointer.ref (default GUPPI_LIB.LIB).')
 AS s(ENTITY, NEXT_SEQ, ID_PREFIX, NOTES)
 WHERE NOT EXISTS (SELECT 1 FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = s.ENTITY);
 
