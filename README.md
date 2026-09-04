@@ -57,6 +57,13 @@ snow sql -f seeds/engine/06_bond.sql        # The Bond (episodic memory); ships 
 # 3. Bootstrap content — ONE TIME only on fresh accounts (seeds the ID registry; no artifacts)
 snow sql -f seeds/content/bootstrap.sql
 
+# 3b. Widget library (GUPPI_LIB) — grant-once/ACCOUNTADMIN; ships the canonical widget impls
+snow sql -f seeds/library/01_widget_library.sql
+# PUT the 7 build-template file-widgets to the stage (role must hold GUPPI_LIB_STEWARD)
+for f in assets/widgets/*.sql; do snow stage copy "$f" @GUPPI_LIB.LIB.WIDGET_FILES/ --overwrite; done
+# Mint the W-1..W-10 WIDGET catalog artifacts pointing at the impls (idempotent)
+snow sql -f seeds/content/widget_catalog.sql
+
 # 4. Verify: the conformance gate must report PASS on every row
 snow sql -q "SELECT * FROM GUPPIWHEEL.PUBLIC.GUPPI_CONFORMANCE_V ORDER BY check_name;"
 
@@ -67,6 +74,33 @@ SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --
 ```
 
 A fresh install starts with a clean wheel (no seeded artifacts), so the gate passes immediately. Re-run the gate any time after you build or re-author — it is the definition of done (see `COCO.md`).
+
+## Upgrade to 3.23.0 (from 3.22.x)
+
+```bash
+git pull
+# Engine seeds are CREATE OR REPLACE — safe to re-run (03_procs.sql self-heals the version stamp to 3.23.0).
+snow sql -f seeds/engine/03_procs.sql
+
+# Widget library (GUPPI_LIB) — grant-once/ACCOUNTADMIN, idempotent. Creates GUPPI_LIB_STEWARD,
+# the LIB schema + WIDGET_FILES stage + PARSE_DICOM, and the least-privilege family grants
+# (clears any residual USAGE->PUBLIC, current + future).
+snow sql -f seeds/library/01_widget_library.sql
+for f in assets/widgets/*.sql; do snow stage copy "$f" @GUPPI_LIB.LIB.WIDGET_FILES/ --overwrite; done
+snow sql -f seeds/content/widget_catalog.sql
+
+# Reference / self-check
+snow sql -f seeds/upgrades/3.22.0-to-3.23.0.sql
+```
+
+Additive only — no artifact rows are rewritten. Ships the canonical **GUPPI_LIB widget library**
+(reverses 3.22.0's type-only stance): the plugin is now the source of truth and a live `GUPPI_LIB.LIB`
+is a deployment of it. Widgets come in two forms — an object-widget (`W-1` `PARSE_DICOM`, a runnable UDF)
+and file-widgets (`W-4..W-10` build templates at `@GUPPI_LIB.LIB.WIDGET_FILES`). The library is
+least-privilege: `GUPPI_LIB_STEWARD` owns the schema/stage/objects; the Guppi family consumes
+(VIEWER read / CONTRIBUTOR+ADMIN run); never PUBLIC. Also repairs a pre-existing version-stamp drift
+(the engine `PUBLISH_PLUGIN_VERSION` had lagged at 3.21.1). The RSI engine is intentionally **not**
+packaged here (its PrPr Cortex Workflow Automation should not be a hard plugin dependency pre-GA).
 
 ## Upgrade from 2.0.0
 
@@ -109,8 +143,8 @@ snow sql -f seeds/upgrades/3.21.1-to-3.22.0.sql
 
 Additive only (RULE-019) — no artifact rows are rewritten. Adds the **WIDGET** artifact
 type: a governed pointer to a reusable building block (impl lives at `content.pointer.ref`,
-default `GUPPI_LIB.LIB`, referenced not shipped). Type-only — no widget implementations
-ship in this plugin.
+default `GUPPI_LIB.LIB`). Type-only in 3.22.0 — no widget implementations shipped then.
+**Superseded in 3.23.0:** the canonical `GUPPI_LIB` widget library now ships with the plugin (see *Upgrade to 3.23.0* above).
 
 ## Upgrade to 3.21.0 (from any 3.x)
 
@@ -181,6 +215,12 @@ GUPPIWHEEL.PUBLIC
 
 Roles: GUPPIWHEEL_ADMIN > GUPPIWHEEL_CONTRIBUTOR > GUPPIWHEEL_VIEWER
 (direct INSERT on ARTIFACTS is revoked even from ADMIN — writes flow only through procs)
+
+GUPPI_LIB.LIB   -- widget library (ships in 3.23.0; steward-owned, least-privilege)
+├── PARSE_DICOM        -- W-1 object-widget: runnable header-parse UDF
+├── @WIDGET_FILES      -- W-4..W-10 build-template file-widgets (rendered, then CREATE'd)
+└── (the W- WIDGET artifacts in the wheel point here via content.pointer)
+Role: GUPPI_LIB_STEWARD owns it; GUPPIWHEEL_VIEWER reads, CONTRIBUTOR/ADMIN run.
 ```
 
 ## Architecture principles
