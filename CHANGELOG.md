@@ -2,7 +2,27 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.23.0] — 2026-09-04
+
+### Added — GUPPI_LIB widget library ships with the plugin (reverses 3.22.0 type-only)
+
+3.22.0 shipped the WIDGET **type** only ("no GUPPI_LIB scaffold, no bundled code"). 3.23.0 **consciously reverses that for the library**: the plugin now carries and installs the canonical `GUPPI_LIB` widget-library impls, so a fresh install has a populated, governed library instead of an empty pointer target. The **repo becomes the source of truth**; a live `GUPPI_LIB.LIB` is a deployment of it.
+
+- **`seeds/library/01_widget_library.sql`** (grant-once / account phase, ACCOUNTADMIN, idempotent): creates the least-privilege **`GUPPI_LIB_STEWARD`** role (owns the `LIB` schema + `WIDGET_FILES` stage + `PARSE_DICOM`), the `GUPPI_LIB` db (owner ACCOUNTADMIN), and the named-family grants (VIEWER read incl. stage READ; CONTRIBUTOR/ADMIN execute + FUTURE funcs/procs). Explicitly revokes PUBLIC (current + future) — clears a residual future-USAGE→PUBLIC left from pre-standardization.
+- **`assets/widgets/*.sql`** (7 build templates: storage-index, semantic-index, search-index, agent, governance, spcs-head, verify-build) — reference-free, generalized from the proven imaging `DICOM_BUILD_*` recipes — plus a documented file-PUT install step (`assets/widgets/README.md`) to load them into `@GUPPI_LIB.LIB.WIDGET_FILES`.
+- **`seeds/content/widget_catalog.sql`** — idempotent `SEED_WIDGET_CATALOG()` that mints the `W-1..W-10` WIDGET artifacts pointing at the impls (object FQN for `W-1` PARSE_DICOM; `stage_file` for `W-4..W-10`); skips widgets already present.
+- **Platform-DB access convention** (least-privilege: dedicated steward owns, named Guppi family consumes) is now the shipped default for `GUPPI_LIB`, mirroring the live standardization. Stewart's weekly watchdog (`STEWART_AUDIT`/`STEWART_TASK`) validates it.
+
+### Fixed — engine version-stamp drift
+
+`seeds/engine/03_procs.sql` `PUBLISH_PLUGIN_VERSION` had lagged at `3.21.1` through the 3.22.0 release; now `3.23.0`, restoring the SDLC 13.1 four-way match (plugin.json == stamp == README == live).
+
+### Out of scope (separate pass)
+
+The RSI engine, experience-card memory, Bob's RSI versions, and the Stewart watchdog remain live-account only — deliberately **not** packaged here (the RSI loop rides the PrPr Cortex Workflow Automation, which should not be a hard plugin dependency until GA).
+
 ## [3.22.0] — 2026-08-31
+
 
 ### Added — WIDGET artifact type (governed pointer to a reusable building block)
 

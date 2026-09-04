@@ -1,0 +1,21 @@
+-- =============================================================================
+-- guppi-platform upgrade: 3.22.0 -> 3.23.0
+-- Ships the GUPPI_LIB widget library (reverses 3.22.0 "type-only" for the library).
+-- =============================================================================
+-- Existing installs pick up the widget library by applying, IN ORDER, as ACCOUNTADMIN:
+--   1. seeds/library/01_widget_library.sql   (GRANT-ONCE / account phase:
+--         creates GUPPI_LIB_STEWARD, GUPPI_LIB.LIB schema + WIDGET_FILES stage,
+--         PARSE_DICOM, named-family grants; idempotent; clears any residual PUBLIC)
+--   2. the file-PUT step in assets/widgets/README.md
+--         (PUT the 7 build-template .sql files to @GUPPI_LIB.LIB.WIDGET_FILES as GUPPI_LIB_STEWARD)
+--   3. seeds/content/widget_catalog.sql      (idempotent W-1..W-10 catalog mint;
+--         skips widgets already present -- safe on accounts that built the lib live)
+--
+-- This upgrade file is intentionally instructional: steps 1-3 involve account-level
+-- object creation and a client-side file PUT that a pure delta-SQL file cannot perform.
+-- All three are idempotent, so re-applying them is safe.
+--
+-- Also in 3.23.0: the engine version stamp (seeds/engine/03_procs.sql) is corrected to
+-- 3.23.0 -- it had lagged at 3.21.1 through the 3.22.0 release (4-way match now restored).
+-- =============================================================================
+SELECT 'guppi-platform 3.22.0 -> 3.23.0: apply seeds/library/01_widget_library.sql, PUT assets/widgets/*, then seeds/content/widget_catalog.sql (all idempotent, ACCOUNTADMIN).' AS UPGRADE_NOTE;

@@ -118,7 +118,13 @@ Mixing both? Put prose under a `body_md` key alongside your structured keys. The
 - **Platform/guppi tooling stories** use the `PLAT-N` series via an **explicit** `P_EXPLICIT_ID='PLAT-N'` with product `guppi` (the `STORY_GUPPI` series is unregistered — documented quirk; follow precedent, don't invent a new series mid-task).
 
 ### WIDGET — the single-source rule
-A WIDGET is a **governed catalog entry that points to a reusable building block** (a proc, UDF, HTML pattern, python module, …) living anywhere in the account. The artifact carries the metadata; the impl lives in a library home (e.g. `GUPPI_LIB.LIB`) and is **referenced, not shipped in this plugin**.
+A WIDGET is a **governed catalog entry that points to a reusable building block** (a proc, UDF, HTML pattern, python module, …) living anywhere in the account. The artifact carries the metadata; the impl lives in a library home (e.g. `GUPPI_LIB.LIB`). **As of 3.23.0 the canonical `GUPPI_LIB` widget library ships with this plugin** (`seeds/library/01_widget_library.sql` + `assets/widgets/*` + `seeds/content/widget_catalog.sql`) — the repo is the source of truth and a live `GUPPI_LIB.LIB` is a deployment of it. The library is least-privilege: the **`GUPPI_LIB_STEWARD`** role owns the schema/stage/objects; the named Guppi family consumes (VIEWER read / CONTRIBUTOR+ADMIN run); never PUBLIC.
+
+**Two widget forms (two shelves in the same library):**
+- **Object-widget** — a runnable schema object (e.g. `W-1` `GUPPI_LIB.LIB.PARSE_DICOM(VARCHAR)`), `pointer.kind="object"`. You **call** it.
+- **File-widget** — a build-template file on the stage (e.g. `W-4..W-10` at `@GUPPI_LIB.LIB.WIDGET_FILES/<class>.sql`), `pointer.kind="stage_file"`. You **render** it (substitute `<TOKENS>`) then `CREATE` a domain recipe.
+
+**Install phases:** (1) `seeds/library/01_widget_library.sql` (grant-once/ACCOUNTADMIN: steward + schema + stage + object-widgets + grants); (2) PUT `assets/widgets/*.sql` to `@GUPPI_LIB.LIB.WIDGET_FILES` (see `assets/widgets/README.md`); (3) `seeds/content/widget_catalog.sql` mints the `W-N` artifacts pointing at the impls. All idempotent.
 
 **Content contract** (`P_CONTENT` JSON object):
 ```
@@ -130,7 +136,7 @@ A WIDGET is a **governed catalog entry that points to a reusable building block*
   "provenance": "<who built it / under which artifact>" }
 ```
 
-**The rule (enforce this):** **one physical implementation + one WIDGET artifact.** A widget may appear in *many* contexts — never as a copy. Multi-surfacing is done with **tags + the pointer**, not duplication. Example: `W-1` (PARSE_DICOM) is tagged `imaging-dicom` **and** `guppi-showcase`, so it surfaces in the imaging catalog and the platform showcase from **one** row over **one** impl (`GUPPI_LIB.LIB.PARSE_DICOM`). Packaging: the owner of the canonical impl (core guppi = library steward) maintains it; domain packs **declare a dependency and reference the pointer** — they must not re-bundle the code.
+**The rule (enforce this):** **one physical implementation + one WIDGET artifact.** A widget may appear in *many* contexts — never as a copy. Multi-surfacing is done with **tags + the pointer**, not duplication. Example: `W-1` (PARSE_DICOM) is tagged `imaging-dicom` **and** `guppi-showcase`, so it surfaces in the imaging catalog and the platform showcase from **one** row over **one** impl (`GUPPI_LIB.LIB.PARSE_DICOM`). Packaging: **core guppi (this plugin) is the library steward** — it ships + maintains the canonical `GUPPI_LIB` impls (3.23.0+); domain packs **declare a dependency and reference the pointer** — they must not re-bundle the code.
 
 ### ⚠️ THE DEDUP RULE (RULE-031 — no unilateral dup-override)
 `SUBMIT_INITIATIVE` HOLDs when a new initiative is `AI_SIMILARITY >= 0.80` to a live one, returning:
