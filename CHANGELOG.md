@@ -2,6 +2,22 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.23.1] — 2026-09-09
+
+### Fixed — BOB_WRITE_EPIC_STORIES JSON generation (structured outputs) + seeded
+
+Bob's story author choked when fed character-dense Rocky research (em dashes, `$14.2B`, `RWD/payer` slashes, nested quotes): the LLM emitted JSON with unescaped inner quotes/newlines and occasional trailing prose, and the proc's prompt-only + greedy `re.search(r'\{.*\}')` + `json.loads` path failed with *"Extra data at column 443"* and *"Expecting ',' delimiter at column 2746"*. Because the parse feeds artifact creation with no fallback, this was a **hard failure** (no epic/stories written) — worse than the other LLM→JSON sites, which degrade gracefully.
+
+- **Root fix — Cortex structured outputs.** The LLM call now uses `SNOWFLAKE.CORTEX.COMPLETE(model, messages, {response_format:{type:json, schema:…}})`, so the model output is **platform-guaranteed schema-valid** and the escaping failure class is eliminated at the source. Reads the schema-conforming object at `env:structured_output[0]:raw_message`.
+- **Fallback hardened.** If structured output is unavailable, falls back to an unconstrained completion + a **balanced-brace extractor** (respects JSON strings/escapes) instead of the greedy `\{.*\}` that swallowed trailing braces.
+- **Tags de-hardcoded.** Dropped the baked-in `nextgen`/`coding-llm` epic tags and `NextGen Coding LLM MVP` default title; tags now derive from the product argument.
+- **Now in the seed.** The proc was **live-only** (created ad-hoc 2026-09-02, absent from every seed) and would have vanished on a fresh install / re-seed. Added to `seeds/engine/03_procs.sql` with `GRANT USAGE` to `GUPPIWHEEL_ADMIN` + `GUPPIWHEEL_CONTRIBUTOR`.
+- **Proven** on `RES-130-ROCKY` (the exact failing input): `parse_path=structured`, `note=null`, 5 stories written with real bodies.
+
+### Audited — sibling LLM→JSON generators (no change this release)
+
+Reviewed the other agents' JSON-from-LLM paths. All degrade gracefully (raw-text fallback, empty-array + retry, or validate+repair), so none hard-fail like the above — but they share the fragility class and are candidates for the same structured-output upgrade: `ROCKY_EXECUTE` swarm reconciler, `ROCKY_AB` judge, `RADAR_ASSESS` (can silently under-assess a batch), `BOB_EXECUTE` claim-localization. `BOB_EXECUTE`'s main author already has fence-stripping + `strict=False` + a validate→repair loop.
+
 ## [3.23.0] — 2026-09-04
 
 ### Added — GUPPI_LIB widget library ships with the plugin (reverses 3.22.0 type-only)

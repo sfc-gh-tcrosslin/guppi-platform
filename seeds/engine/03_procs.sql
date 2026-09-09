@@ -2029,8 +2029,162 @@ def run(session, p_artifact_id, p_product_id, p_reason):
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RETAG_PRODUCT(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 
+-- =============================================================================
+-- BOB_WRITE_EPIC_STORIES — Bob authors an EPIC + 3-5 stories from a RESEARCH
+-- artifact for a narrow, buildable MVP first slice. Uses Cortex COMPLETE STRUCTURED
+-- OUTPUTS (response_format JSON schema) so the model output is platform-guaranteed
+-- schema-valid: this eliminates the JSON-escaping failure class that broke the
+-- prior prompt-only + greedy-regex approach on character-dense research (em dashes,
+-- $14.2B, RWD/payer slashes, nested quotes) -> "Extra data" / "Expecting ',' delimiter".
+-- Reads env:structured_output[0]:raw_message (NOT choices[].messages). Falls back to
+-- an unconstrained completion + a balanced-brace extractor (respects JSON strings/
+-- escapes) rather than a greedy \{.*\} match. Product-derived tags (no hardcoding).
+-- Idempotent: one epic per (parent_init, research_id). Single write chokepoint via
+-- CREATE_ARTIFACT (RULE-029).
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(P_RESEARCH_ID VARCHAR, P_PARENT_INIT VARCHAR, P_PRODUCT VARCHAR)
+RETURNS VARIANT
+LANGUAGE PYTHON
+RUNTIME_VERSION = '3.11'
+PACKAGES = ('snowflake-snowpark-python')
+HANDLER = 'run'
+EXECUTE AS OWNER
+AS $$
+import json
+
+def _call_create(session, args):
+    r = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?,?,?,?,?,?,?,?,?)", params=args).collect()
+    v = r[0][0] if r else None
+    if isinstance(v, str):
+        try: v = json.loads(v)
+        except Exception: v = {"raw": v}
+    return v or {}
+
+def _extract_balanced(s):
+    # first '{' to its matching '}', respecting JSON strings/escapes
+    start = s.find('{')
+    if start < 0:
+        return None
+    depth = 0; in_str = False; esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc: esc = False
+            elif ch == '\\': esc = True
+            elif ch == '"': in_str = False
+        else:
+            if ch == '"': in_str = True
+            elif ch == '{': depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return s[start:i+1]
+    return None
+
+def run(session, research_id, parent_init, product):
+    # idempotency: one epic per (parent_init, research_id)
+    g = session.sql(
+        "SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS_CURRENT_V "
+        "WHERE PARENT_ID=? AND TYPE='EPIC' AND ID LIKE 'E-%' "
+        "AND TRY_PARSE_JSON(METADATA):source_research::string=? "
+        "ORDER BY CREATED_AT DESC LIMIT 1", params=[parent_init, research_id]).collect()
+    if g:
+        epic_id = g[0][0]
+        st = session.sql("SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS_CURRENT_V WHERE PARENT_ID=? AND TYPE='STORY' ORDER BY ID", params=[epic_id]).collect()
+        return {"idempotent": True, "epic_id": epic_id, "story_ids": [r[0] for r in st]}
+
+    rc = session.sql("SELECT CONTENT::string FROM GUPPIWHEEL.PUBLIC.ARTIFACTS_CURRENT_V WHERE ID=?", params=[research_id]).collect()
+    if not rc:
+        return {"error": "research_not_found", "research_id": research_id}
+    research = rc[0][0][:9000]
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "epic": {"type": "object", "properties": {
+                "title": {"type": "string"}, "summary": {"type": "string"}, "body_md": {"type": "string"}},
+                "required": ["title", "summary", "body_md"]},
+            "stories": {"type": "array", "items": {"type": "object", "properties": {
+                "title": {"type": "string"}, "summary": {"type": "string"},
+                "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                "rationale": {"type": "string"}},
+                "required": ["title", "summary", "acceptance_criteria", "rationale"]}}
+        },
+        "required": ["epic", "stories"]
+    }
+    instr = ("You are Bob, a Snowflake delivery agent. Given RESEARCH on an initiative, produce an EPIC and 3 to 5 "
+             "user stories to de-risk and deliver an MVP. Bias to a NARROW, buildable first slice that yields an early "
+             "measurable signal. Each story needs concrete, testable acceptance_criteria. RESEARCH:\n" + research)
+    messages = [{"role": "user", "content": instr}]
+    options = {"temperature": 0, "max_tokens": 4000, "response_format": {"type": "json", "schema": schema}}
+
+    data = None
+    parse_note = None
+    # PRIMARY: structured outputs -> platform-guaranteed schema-valid JSON (no escaping fragility)
+    try:
+        row = session.sql(
+            "SELECT SNOWFLAKE.CORTEX.COMPLETE('llama3.1-70b', PARSE_JSON(?)::ARRAY, PARSE_JSON(?)::OBJECT)",
+            params=[json.dumps(messages), json.dumps(options)]).collect()
+        env = row[0][0]
+        if isinstance(env, str):
+            env = json.loads(env)
+        so = (env or {}).get("structured_output") or []
+        if so and isinstance(so, list):
+            data = so[0].get("raw_message")
+    except Exception as e:
+        parse_note = "structured_error: " + str(e)
+
+    # FALLBACK: unconstrained completion + balanced-brace extraction (no greedy regex)
+    if not data:
+        try:
+            raw = session.sql(
+                "SELECT SNOWFLAKE.CORTEX.COMPLETE('llama3.1-70b', ?)",
+                params=[instr + "\n\nReturn ONLY strict minified JSON with keys epic{title,summary,body_md} and "
+                        "stories[]{title,summary,acceptance_criteria[],rationale}. Escape all inner quotes and newlines. No markdown."]
+            ).collect()[0][0]
+            frag = _extract_balanced(raw)
+            if frag:
+                data = json.loads(frag)
+                parse_note = (parse_note or "") + " | fallback_used"
+        except Exception as e:
+            return {"error": "json_error", "detail": str(e), "note": parse_note}
+
+    if not data:
+        return {"error": "parse_failed", "note": parse_note}
+
+    epic = data.get("epic", {}) or {}
+    stories = data.get("stories", []) or []
+    prod = (product or "").strip()
+    epic_tags = ["bob-authored"] + ([prod] if prod else [])
+    story_tags = ["bob-authored"] + ([prod] if prod else [])
+    epic_meta = {"source_research": research_id, "authored_by": "BOB_WRITE_EPIC_STORIES", "origin": "bob-agent", "model": "llama3.1-70b"}
+    epic_content = {"summary": epic.get("summary", ""), "body_md": epic.get("body_md", ""), "source_research": research_id}
+    er = _call_create(session, [
+        "EPIC", (epic.get("title") or "MVP Epic")[:200], "",
+        json.dumps(epic_content), parent_init, "Initiate",
+        json.dumps(epic_tags), "", json.dumps(epic_meta)])
+    epic_id = er.get("artifact_id")
+    if not epic_id:
+        return {"error": "epic_create_failed", "create_result": er}
+
+    story_ids = []
+    for s in stories[:6]:
+        sc = {"summary": s.get("summary", ""), "acceptance_criteria": s.get("acceptance_criteria", []), "rationale": s.get("rationale", "")}
+        sr = _call_create(session, [
+            "STORY", (s.get("title") or "story")[:200], prod,
+            json.dumps(sc), epic_id, "Initiate",
+            json.dumps(story_tags), "",
+            json.dumps({"source_research": research_id, "epic": epic_id})])
+        if sr.get("artifact_id"):
+            story_ids.append(sr["artifact_id"])
+    return {"epic_id": epic_id, "story_ids": story_ids, "story_count": len(story_ids),
+            "model": "llama3.1-70b", "parse_path": ("structured" if not parse_note else "fallback"), "note": parse_note}
+$$;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
 -- Self-heal stamp on every seed apply. This is the SINGLE go-forward version
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.23.0', 'Ship the GUPPI_LIB widget library (reverses 3.22.0 type-only for the library): GUPPI_LIB_STEWARD-owned LIB schema + WIDGET_FILES stage + PARSE_DICOM UDF with named-family grants (seeds/library/01_widget_library.sql); 7 build-template files in assets/widgets PUT to @GUPPI_LIB.LIB.WIDGET_FILES; idempotent W-1..W-10 catalog mint (seeds/content/widget_catalog.sql). Also repairs the 3.22.0 stamp drift (engine stamp had lagged at 3.21.1).', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.23.1', 'Harden + seed BOB_WRITE_EPIC_STORIES (was live-only, not in any seed): switch LLM JSON generation to Cortex COMPLETE structured outputs (response_format schema) so output is platform-guaranteed schema-valid — fixes the escaping failure class that choked on character-dense Rocky research (em dashes, $14.2B, RWD/payer slashes, nested quotes) with "Extra data" / "Expecting comma delimiter". Balanced-brace fallback replaces greedy {.*} regex; product-derived tags replace hardcoded nextgen/coding-llm; grants to GUPPIWHEEL_ADMIN + GUPPIWHEEL_CONTRIBUTOR.', FALSE);

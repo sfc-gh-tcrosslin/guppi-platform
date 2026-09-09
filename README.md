@@ -1,4 +1,4 @@
-# guppi-platform v3.23.0
+# guppi-platform v3.23.1
 
 **Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel.
 
