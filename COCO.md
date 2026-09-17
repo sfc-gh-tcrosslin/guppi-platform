@@ -7,6 +7,8 @@ You are a CoCo (Cortex Code agent) looking at a cloned **guppi-platform** repo. 
 
 > **Guppi** (the product) → **GuppiWheel** (the engine / `GUPPIWHEEL` database) → **Rocky / Cowork / TARS / Stewart** (the agents) → **CoCo** (you, the interface)
 
+> **Two databases.** `GUPPIWHEEL` is the value + governance wheel (what we build and govern). `GUPPI_RSI_ENGINE` is the **RSI engine** (Level 9 · Recursion) — the platform capability that improves what the wheel builds, on a domain/metric-agnostic gated loop. It ships as core but is optional-but-additive: the wheel runs without it; RSI amplifies it. Delegation-grade today (L9.0); net-positive (L9.1) stays gated on held-out proof. See the `rsi` skill.
+
 The wheel is one idea: a single `GUPPIWHEEL.PUBLIC.ARTIFACTS` table is the source of truth, and every
 initiative, research synthesis, app, model, narrative, defect, incident, and audit lives in it. Doctrine
 lives as data in `RULES`. This is **our journey, not objective truth** — and that applies to *your* wheel

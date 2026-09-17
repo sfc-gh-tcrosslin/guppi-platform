@@ -2,6 +2,54 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.24.0] — 2026-09-17
+
+### Added — RSI engine as a core, seeded module (Level 9 · Recursion)
+
+Guppi is an AI Lifecycle Platform, so recursive self-improvement is core — not a
+side project. The RSI engine, previously live-only in one account, now ships as a
+seed under `seeds/rsi/`, in a **separate** database (`GUPPI_RSI_ENGINE.CORE`) so
+it stays cleanly decoupled from the wheel (`GUPPIWHEEL`).
+
+- **New `seeds/rsi/` module** (applied by `guppiwheel-bootstrap` after `06_bond`):
+  `01_schema.sql` (RSI_ENGINE role, `GUPPI_RSI_ENGINE` db + `CORE` schema, stage,
+  6 tables — RSI_RUNS, RSI_TARGET_PROFILE, EXPERIENCE_CARDS, CARD_USAGE,
+  AUDIT_FLAGS, RSI_NOISE_MEASUREMENTS), `02_prereqs.sql` (RSI_AUTO_POOL compute
+  pool + `SNOWFLAKE.CORTEX_USER`), `03_procs.sql` (16 domain/metric-agnostic
+  engine procs, per-proc verbatim `GET_DDL`), `05_workflows.sql` (`RSI_LOOP` +
+  `RSI_ONBOARD` Cortex workflows, staged `main.py`).
+- **Optional git PR loop** — `seeds/rsi/04_commit_loop.sql` ships the commit-loop
+  infra (network rule, EAI, API integration, `RSI_GIT_PUSH`/`RSI_GIT_DELETE_BRANCH`)
+  as **tokenless templates**: a placeholder secret and `<your-github-org>`. It is
+  opt-in and never carries a real credential.
+- **Wheel bridge procs** — `RUN_TARGET_LIFECYCLE` + `BUILD_SUBSTRATE` added to
+  `seeds/engine/03_procs.sql` (GUPPIWHEEL.PUBLIC); these are the entry points
+  `BOB_AGENT` calls to onboard/improve a target.
+- **`skills/rsi/SKILL.md`** — engine doc: two-DB topology, the durable contracts
+  (FQN-bound generic loop, three-tier human gate, measure-eval-noise discipline,
+  artifact-as-recipe, preregistration), the Cowork/`code_toolset_all` caveat, and
+  an **honest maturity** statement.
+
+### Changed
+
+- **`BOB_AGENT` reconciled** (`seeds/engine/05_agents.sql`) from a stale
+  web-search scout to its live delivery spec — 8 tools: `web_search`,
+  `write_epic_stories`, `write_narrative`, `build_substrate`,
+  `run_target_lifecycle`, `flywheel_query`, `search_artifacts`, `code_toolset_all`.
+- **Maturity model extended 7 → 9 levels** (`references/maturity-model.md`): added
+  L8 Representation and L9 Recursion, with the L9 sub-ladder (9.0 delegation →
+  9.1 net-positive → 9.2 ignition → 9.3 inflection). Autonomy is Level 7 (the RSI
+  floor), and Level 4 Trust is the guardrail that keeps Recursion honest.
+- **README + plugin metadata** repositioned to "AI Lifecycle Platform, Levels 2-9."
+
+### Honest status
+
+The engine is **9.0 (delegation)** — it runs the gated loop end to end. **9.1
+(net-positive) is NOT claimed**; it stays gated on held-out proof (fair human
+baseline, a private score never selected against, and a sustained multi-step
+trend). Specific target instances (a coding model, a signal pipeline, etc.) are
+ordinary initiatives and are deliberately **not** part of this seed.
+
 ## [3.23.1] — 2026-09-09
 
 ### Fixed — BOB_WRITE_EPIC_STORIES JSON generation (structured outputs) + seeded

@@ -24,6 +24,15 @@ snowsql -f seeds/engine/03_procs.sql    # Creates the procedures (ADVANCE_STAGE 
 snowsql -f seeds/engine/04_semantic_view.sql
 snowsql -f seeds/engine/05_agents.sql
 snowsql -f seeds/engine/06_bond.sql     # The Bond (THE_BOND db) — episodic memory; ships EMPTY, private by default (row access policy), search bound to your active warehouse
+
+# --- RSI engine (Level 9 · Recursion) — the platform capability that improves what the wheel builds.
+#     Separate database (GUPPI_RSI_ENGINE). Optional-but-core: the wheel runs without it; RSI amplifies it.
+#     Run from the plugin root (05_workflows PUT paths are repo-root-relative). ---
+snowsql -f seeds/rsi/01_schema.sql      # GUPPI_RSI_ENGINE DB/schema/stage + tables + RSI_ENGINE role
+snowsql -f seeds/rsi/02_prereqs.sql     # (ACCOUNTADMIN) compute pool RSI_AUTO_POOL + SNOWFLAKE.CORTEX_USER — REQUIRED
+snowsql -f seeds/rsi/03_procs.sql       # 16 domain/metric-agnostic engine procs
+# snowsql -f seeds/rsi/04_commit_loop.sql  # OPTIONAL (Tier-3 PR loop): edit the github org + set the real token out-of-band FIRST
+snowsql -f seeds/rsi/05_workflows.sql   # RSI_LOOP + RSI_ONBOARD workflows (uploads entrypoints, then CREATE WORKFLOW)
 ```
 
 These are idempotent (CREATE IF NOT EXISTS, MERGE). Safe to re-run on an existing account to pick up new rules.

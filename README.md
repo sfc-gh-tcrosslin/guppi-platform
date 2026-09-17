@@ -1,6 +1,6 @@
-# guppi-platform v3.23.1
+# guppi-platform v3.24.0
 
-**Guppi** — value creation engine on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel.
+**Guppi** — an AI Lifecycle Platform on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel. A second database — the **RSI engine** (Level 9 · Recursion) — improves what the wheel builds, on a gated, domain-agnostic loop. Levels 2–9 of the CoCo Maturity Model.
 
 > **New here? Read [`COCO.md`](COCO.md) first.** It is the contract: what is invariant (don't alter the guarantee), what is a default (yours to change), what is suggestive (author to taste), and the conformance gate that defines "you got Guppi."
 
@@ -11,9 +11,10 @@ Includes:
 - **Radar** — standing weekday scan of major AI blogs. Isolated per-source fetch (ArcticSwarm fan-out) → portfolio-grounded assessment (relevance + related initiatives + *proposed* actions) → one rolling narrative
 - **Cowork** — user-facing dispatch agent (submit, advance, query, publish)
 - **Stewart** — propose-only grounding sub-agent (read-only audit; files fix proposals, never applies them) — RULE-027 / STO-36-O
-- **Bob** — Building-stage agent: authors hypothetical narratives from research, choosing the model by a cross-judge bake-off where no model judges its own work (RULE-023). Advisory *error-localization* on the winner: an independent model decomposes it into atomic claims and flags each grounded/unsupported/contradicted (ArcticSwarm "Agent GPA" pattern)
+- **Bob** — Guppi's delivery agent: grounds (web search), authors narratives via a cross-judge bake-off where no model judges its own work (RULE-023) with advisory *error-localization* on the winner (ArcticSwarm "Agent GPA"), writes epics/user-stories, builds a target's eval substrate, and drives the RSI target lifecycle (human-gated). Runs via the app / `DATA_AGENT_RUN` — **not** the Cowork UI (its coding sandbox isn't supported there).
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
 - **The Bond** — the episodic-memory organ of the AILC: an append-only, co-created log of moments (`THE_BOND` database). Empty on install, private by default.
+- **RSI engine** — the Level 9 (Recursion) capability: a gated, domain/metric-agnostic loop (`RSI_LOOP` / `RSI_ONBOARD`) that improves the artifacts the wheel builds. Separate `GUPPI_RSI_ENGINE` database; **delegation-grade today, net-positive gated on held-out proof**. See the `rsi` skill.
 - **GUPPI viewer** — Flask app rendering Command Center + Flywheel from `localhost:8888`
 
 ## Lifecycle
@@ -54,6 +55,14 @@ snow sql -f seeds/engine/04_semantic_view.sql
 snow sql -f seeds/engine/05_agents.sql      # requires an active warehouse (see prereqs)
 snow sql -f seeds/engine/06_bond.sql        # The Bond (episodic memory); ships EMPTY, private by default; requires an active warehouse
 
+# 2b. RSI engine (Level 9 · Recursion) — separate GUPPI_RSI_ENGINE db. Optional-but-additive.
+#     Run from the repo root (05_workflows PUT paths are repo-root-relative).
+snow sql -f seeds/rsi/01_schema.sql
+snow sql -f seeds/rsi/02_prereqs.sql        # ACCOUNTADMIN: compute pool + SNOWFLAKE.CORTEX_USER — required
+snow sql -f seeds/rsi/03_procs.sql
+# snow sql -f seeds/rsi/04_commit_loop.sql  # OPTIONAL git PR loop — edit the org + set the real token out-of-band first
+snow sql -f seeds/rsi/05_workflows.sql
+
 # 3. Bootstrap content — ONE TIME only on fresh accounts (seeds the ID registry; no artifacts)
 snow sql -f seeds/content/bootstrap.sql
 
@@ -74,6 +83,26 @@ SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --
 ```
 
 A fresh install starts with a clean wheel (no seeded artifacts), so the gate passes immediately. Re-run the gate any time after you build or re-author — it is the definition of done (see `COCO.md`).
+
+## Upgrade to 3.24.0 (from 3.23.x)
+
+**RSI is now core.** The recursive self-improvement engine — previously account-only — ships as a seeded module (`seeds/rsi/`, separate `GUPPI_RSI_ENGINE` database). `BOB_AGENT` is reconciled to its live delivery spec (it had drifted to a stale web-search scout), and the wheel gains the `RUN_TARGET_LIFECYCLE` + `BUILD_SUBSTRATE` bridge procs Bob calls. This **supersedes** the 3.23.0 note below that RSI was intentionally not packaged.
+
+```bash
+git pull
+# Wheel: reconciled Bob + new bridge procs (CREATE OR REPLACE, safe to re-run).
+snow sql -f seeds/engine/03_procs.sql
+snow sql -f seeds/engine/05_agents.sql   # requires an active warehouse
+
+# RSI engine (separate GUPPI_RSI_ENGINE db). Run from the repo root.
+snow sql -f seeds/rsi/01_schema.sql
+snow sql -f seeds/rsi/02_prereqs.sql     # ACCOUNTADMIN: compute pool + Cortex — required
+snow sql -f seeds/rsi/03_procs.sql
+# snow sql -f seeds/rsi/04_commit_loop.sql  # OPTIONAL git PR loop — set the token out-of-band first
+snow sql -f seeds/rsi/05_workflows.sql
+```
+
+Additive — no artifact rows are rewritten. The engine is optional-but-additive (the wheel runs without it); delegation-grade (L9.0), net-positive (L9.1) gated. See the `rsi` skill + `references/maturity-model.md`.
 
 ## Upgrade to 3.23.0 (from 3.22.x)
 
@@ -208,8 +237,10 @@ GUPPIWHEEL.PUBLIC
 ├── ROCKY_AGENT            -- web-search-only research agent
 ├── GUPPIWHEEL_COWORK_AGENT -- user-facing dispatch agent
 ├── STEWART_AGENT          -- Stewart: propose-only grounding sub-agent
-├── BOB_AGENT              -- Bob's web_search grounding scout (Building-stage)
+├── BOB_AGENT              -- Bob: Guppi's delivery agent (narrate / author / build substrate / run RSI lifecycle; via app / DATA_AGENT_RUN)
 ├── BOB_EXECUTE proc        -- Bob: model bake-off + cross-judge → winner NARRATIVE
+├── RUN_TARGET_LIFECYCLE    -- wheel→RSI bridge: triggers the RSI_ONBOARD workflow (human-gated)
+├── BUILD_SUBSTRATE proc    -- Bob authors a target's eval substrate into its Epic
 ├── MODEL_CATALOG          -- enabled models for the bake-off (RULE-023, foundation-model agnosticism)
 └── ROCKY_TASK             -- serverless 5-min cycle running ROCKY_EXECUTE
 
@@ -221,6 +252,17 @@ GUPPI_LIB.LIB   -- widget library (ships in 3.23.0; steward-owned, least-privile
 ├── @WIDGET_FILES      -- W-4..W-10 build-template file-widgets (rendered, then CREATE'd)
 └── (the W- WIDGET artifacts in the wheel point here via content.pointer)
 Role: GUPPI_LIB_STEWARD owns it; GUPPIWHEEL_VIEWER reads, CONTRIBUTOR/ADMIN run.
+
+GUPPI_RSI_ENGINE.CORE   -- RSI engine (Level 9 · Recursion); ships in 3.24.0, separate db, RSI_ENGINE-owned
+├── RSI_RUNS              -- iteration ledger (baseline + candidates, decision, score) — ships EMPTY
+├── RSI_TARGET_PROFILE    -- per-target objective/guard + FQN step bindings (domain-agnostic) — ships EMPTY
+├── EXPERIENCE_CARDS / CARD_USAGE  -- the loop's endogenous memory
+├── AUDIT_FLAGS           -- what shipped / awaits human merge (commit, PR, TARS)
+├── RSI_NOISE_MEASUREMENTS -- measured eval noise (set the accept margin from data, not a guess)
+├── RSI_* procs           -- domain/metric-agnostic engine (decide/log/narrate/measure/provision/cards)
+├── RSI_LOOP workflow     -- RIGHT: improve an artifact against its objective (gated)
+└── RSI_ONBOARD workflow  -- LEFT: initiative → self-improving target (human-gated)
+Role: RSI_ENGINE owns + executes. Instances (specific targets) are initiatives, never seeded.
 ```
 
 ## Architecture principles
@@ -288,6 +330,7 @@ ALTER SHARE <PRODUCT>_SHARE ADD ACCOUNTS=<account_locator>;
 - See `CHANGELOG.md` for version history and breaking changes
 - See `skills/guppiwheel/SKILL.md` for the full GuppiWheel concept
 - See `skills/guppi/SKILL.md` for the viewer architecture
+- See `skills/rsi/SKILL.md` for the RSI engine (Level 9 · Recursion) — topology, durable contracts, and honest maturity
 - See `skills/guppi-slack-rep/SKILL.md` for the optional Slack representative recipe (a *suggestion* one Guppi makes to another — capability tier, not seed substrate)
 - See `agents/rocky.md`, `agents/tars.md`, `agents/steward.md`, and `agents/bob.md` for agent behavior contracts
 - See `references/maturity-model.md` and `references/trust-equation.md` for theoretical foundations
