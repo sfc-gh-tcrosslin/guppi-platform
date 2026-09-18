@@ -2183,6 +2183,16 @@ $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 
+-- INVOKER-ROLE NOTE (durable re-grant): Bob's authoring TOOLS (write_epic_stories,
+-- write_narrative, build_substrate, run_target_lifecycle) run these EXECUTE AS OWNER
+-- procs. Any Cortex Agent / app caller role that drives BOB_AGENT (e.g. a See-the-Loop
+-- app owner role like RSI_APP_READER) MUST also hold USAGE on them. CREATE OR REPLACE
+-- drops object-level grants, so re-granting one-off silently breaks on the next redeploy
+-- (this bit us: the 2026-09-09 hardening dropped RSI_APP_READER's USAGE). Durable fix in
+-- the consuming account: grant the invoker role FUTURE usage so it survives every replace:
+--   GRANT USAGE ON FUTURE PROCEDURES IN SCHEMA GUPPIWHEEL.PUBLIC TO ROLE <agent_invoker_role>;
+-- (Account-specific invoker roles are intentionally NOT hard-coded into this seed.)
+
 -- =============================================================================
 -- RSI bridge procs (RSI-is-core, v3.24.0): the wheel-side entry points into the
 -- GUPPI_RSI_ENGINE. BOB_AGENT's run_target_lifecycle / build_substrate tools
@@ -2349,4 +2359,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BUILD_SUBSTRATE(VARCHAR, VARCHAR, BOO
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.24.0', 'RSI is core: seed the domain/metric-agnostic RSI engine as a second database (GUPPI_RSI_ENGINE.CORE -- 6 tables, 16 procs, RSI_LOOP + RSI_ONBOARD workflows, RSI_ENGINE role) via the new seeds/rsi/ module; add the wheel-side RUN_TARGET_LIFECYCLE + BUILD_SUBSTRATE bridge procs; reconcile BOB_AGENT to its live delivery spec (was a stale web-search scout). Reposition to AI Lifecycle Platform, Levels 2-9. Delegation-grade (L9.0); net-positive (L9.1) gated on held-out proof.', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.24.1', 'Bob plugin awareness: attach guppi-platform skills to BOB_AGENT via a Snowflake GIT REPOSITORY (all skills except sdlc-preflight, type GIT_INTEGRATION, commit-pinned) with a HARD CAPABILITY GUARDRAIL (author only via governed tools; never raw DML; report capability gaps). Durable re-grant: FUTURE USAGE on wheel procedures to the agent invoker role so CREATE OR REPLACE no longer silently drops it (fixes the 3.23.1 regression that broke the See-the-Loop app role). Reconcile BOB_AGENT seed to live 8-tool spec; fix app context header to route writes through governed tools.', FALSE);

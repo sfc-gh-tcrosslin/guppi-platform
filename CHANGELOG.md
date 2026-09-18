@@ -2,6 +2,44 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.24.1] — 2026-09-18
+
+### Added — Bob plugin awareness (Git-sourced agent skills)
+
+`BOB_AGENT` is a server-side Cortex Agent: it only knew its own spec + tools, not
+the guppi-platform doctrine that CoCo runs with. It now discovers that doctrine on
+demand via **agent skills** attached from a Snowflake **Git repository** on this repo.
+
+- **20 skills attached** (all except `sdlc-preflight`, whose dual-remote git push is
+  human-gated). Source type is `GIT_INTEGRATION`, commit-pinned. Attachment is a
+  **per-account** step (the git integration + commit hash are account-specific), so
+  it is documented in `05_agents.sql` + the `rsi` skill rather than hard-seeded.
+- **HARD CAPABILITY GUARDRAIL** added to Bob's orchestration instructions: he is
+  read-only on direct SQL (the `code_toolset_all` sandbox runs SELECT/SHOW/DESCRIBE
+  only); to create or change anything in the wheel he MUST call a governed tool
+  (`write_epic_stories` / `write_narrative` / `build_substrate` / `run_target_lifecycle`);
+  never raw DML; if a skill needs a capability he lacks, he REPORTS the gap instead of
+  improvising. This closes the failure mode where Bob fell back to a raw `INSERT`.
+
+### Fixed — recurring write-path regression (CREATE OR REPLACE drops grants)
+
+Bob's authoring tools run `EXECUTE AS OWNER` procs, so an invoker only needs USAGE on
+them — but `CREATE OR REPLACE PROCEDURE` **drops all grants**, and the 2026-09-09
+hardening re-granted only the standard roles, silently removing the See-the-Loop app
+role's (`RSI_APP_READER`) USAGE. That, not a missing privilege, is why Bob broke.
+
+- **Durable fix:** grant the agent invoker role `USAGE ON FUTURE PROCEDURES IN SCHEMA
+  GUPPIWHEEL.PUBLIC` so a proc replace re-applies USAGE automatically. Documented as an
+  invoker-role convention in `03_procs.sql` (account-specific roles are not hard-seeded).
+
+### Changed
+
+- **`05_agents.sql` reconciled** to the live `BOB_AGENT` spec (8 tools + server-bound
+  `tool_resources` + the guardrail); fixed stale "grounding scout / web_search only"
+  header comments.
+- **See-the-Loop app context header** (`bob-panel.tsx`) rewritten: the code sandbox is
+  for read-only lookups; authoring is routed through Bob's governed tools.
+
 ## [3.24.0] — 2026-09-17
 
 ### Added — RSI engine as a core, seeded module (Level 9 · Recursion)
