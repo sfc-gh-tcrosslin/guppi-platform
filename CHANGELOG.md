@@ -2,6 +2,20 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.25.0] — 2026-09-18
+
+### Added — Agent chat store (durable, multi-user conversation memory)
+
+- New engine seed `seeds/engine/08_chat.sql`: `AGENT_CHAT_MESSAGES` (ships empty, persona-agnostic `AGENT` column for a future Riker/Will) plus governed `EXECUTE AS OWNER` procs `SAVE_CHAT_MESSAGE`, `GET_CHAT_HISTORY`, `CLEAR_CHAT_THREAD`. Threads are keyed by `(AGENT, USER_ID, INITIATIVE_ID)`; per-user isolation is enforced by the read proc filtering the passed `USER_ID` (the app derives it from the SPCS ingress header `sf-context-current-user`, since the owner-rights procs can't see the human via `CURRENT_USER()`). Writes are proc-mediated only (RULE-028) — no table DML granted to invoker roles; the app role auto-authorizes via the account's `FUTURE PROCEDURES` grant.
+
+### Fixed — See-the-Loop Bob chat amnesia + Act-switch loss
+
+- Bob's conversation now persists across Acts (0/1/2/How), page reloads, and devices. Root cause was a client-only, ephemeral thread wiped on every Act switch. Fix: the thread is scoped to the initiative and backed by the server store; the last-N turns are replayed into the agent `messages[]` array each turn. (Native Cortex threads are not usable on the `DATA_AGENT_RUN` SQL surface — sync returns no `thread_id`, background requires one and won't auto-create, and there's no SQL thread-create function; full threads are REST/PAT-only. Verified via spike on AWS us-west-2.)
+
+### Changed
+
+- Four-way version bump to 3.25.0 + `PUBLISH_PLUGIN_VERSION` stamp.
+
 ## [3.24.1] — 2026-09-18
 
 ### Added — Bob plugin awareness (Git-sourced agent skills)
