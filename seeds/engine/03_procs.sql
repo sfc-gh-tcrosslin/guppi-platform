@@ -538,6 +538,55 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(VARCHAR,NUMBER,NUMB
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE() TO ROLE GUPPIWHEEL_ADMIN;
 
 -- =============================================================================
+-- ASSIGN_PRODUCT — assign a product to an artifact IN THE FLOW (RULE-028 governed).
+-- The user picks a product in Act 0; this stamps PRODUCT_ID on the target and
+-- CASCADES it to the whole lineage (initiative -> research/epic/narrative ->
+-- stories), so the product boundary is data on the wheel, not an app-side map.
+-- Downstream (write_epic_stories / run_target_lifecycle) can then resolve the
+-- product from the artifact instead of requiring it to be passed. Validates the
+-- product against PRODUCTS (STATUS active, case-insensitive). EXECUTE AS OWNER so
+-- invokers need only USAGE, never ARTIFACTS DML.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.ASSIGN_PRODUCT(P_ARTIFACT_ID VARCHAR, P_PRODUCT_ID VARCHAR)
+RETURNS VARIANT
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+DECLARE
+    valid INT;
+    updated INT;
+BEGIN
+    IF (:P_ARTIFACT_ID IS NULL OR :P_PRODUCT_ID IS NULL) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'artifact_id and product_id are required');
+    END IF;
+    SELECT COUNT(*) INTO :valid
+      FROM GUPPIWHEEL.PUBLIC.PRODUCTS
+     WHERE PRODUCT_ID = :P_PRODUCT_ID AND UPPER(COALESCE(STATUS, 'ACTIVE')) = 'ACTIVE';
+    IF (:valid = 0) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'unknown or inactive product: ' || :P_PRODUCT_ID);
+    END IF;
+    LET root INT := (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID);
+    IF (:root = 0) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'artifact not found: ' || :P_ARTIFACT_ID);
+    END IF;
+    -- Stamp the artifact + all descendants (recursive on PARENT_ID).
+    UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
+       SET PRODUCT_ID = :P_PRODUCT_ID, UPDATED_AT = CURRENT_TIMESTAMP()
+     WHERE ID IN (
+        WITH RECURSIVE tree AS (
+            SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID
+            UNION ALL
+            SELECT a.ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a JOIN tree t ON a.PARENT_ID = t.ID
+        )
+        SELECT ID FROM tree
+     );
+    updated := SQLROWCOUNT;
+    RETURN OBJECT_CONSTRUCT('ok', TRUE, 'artifact', :P_ARTIFACT_ID, 'product_id', :P_PRODUCT_ID, 'updated_count', :updated);
+END;
+
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ASSIGN_PRODUCT(VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- =============================================================================
 -- NORMALIZE_ARTIFACT_CONTENT — the ONE canonical content-shape normalizer (RULE-033).
 -- Pure function (no session): guarantees renderable types carry CONTENT.body_md.
 -- Called by BOTH write paths (CREATE_ARTIFACT + UPDATE_OWN_ARTIFACT) and the one-time
@@ -2359,4 +2408,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BUILD_SUBSTRATE(VARCHAR, VARCHAR, BOO
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.25.0', 'Agent chat store: durable, multi-user, per-initiative conversation memory (engine seed 08_chat.sql). Server-side AGENT_CHAT_MESSAGES + governed EXECUTE AS OWNER procs SAVE_CHAT_MESSAGE / GET_CHAT_HISTORY / CLEAR_CHAT_THREAD (persona-agnostic AGENT column, ships empty, proc-mediated writes per RULE-028; per-user isolation by filtering the passed USER_ID). Fixes the See-the-Loop Bob chat amnesia: threads persist across Acts, reloads, and devices by replaying the last-N turns into the agent messages[] array (native Cortex threads are not usable on the DATA_AGENT_RUN SQL surface). Spike-confirmed on AWS us-west-2.', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.26.0', 'Product-in-flow: new governed ASSIGN_PRODUCT(artifact_id, product_id) proc (EXECUTE AS OWNER) validates against PRODUCTS and stamps PRODUCT_ID on the target artifact + cascades it recursively down the lineage (initiative -> research/epic/narrative -> stories). Makes product a first-class wheel attribute assigned by the user in Act 0, retiring the app-side PRODUCT_BY_INIT hardcode. Downstream the See-the-Loop app resolves product from ARTIFACTS.PRODUCT_ID and injects research_id+product into Bob''s chat context so run_target_lifecycle runs directly server-side (fixes the one-shot DATA_AGENT_RUN client-side-tool stall that returned "(no answer)").', FALSE);

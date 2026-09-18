@@ -2,6 +2,20 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.26.0] — 2026-09-18
+
+### Added — Product assigned in-flow (governed `ASSIGN_PRODUCT`)
+
+- New engine proc `GUPPIWHEEL.PUBLIC.ASSIGN_PRODUCT(P_ARTIFACT_ID, P_PRODUCT_ID)` (`EXECUTE AS OWNER`, in `seeds/engine/03_procs.sql`): validates the product against `PRODUCTS` (STATUS active, case-insensitive) and stamps `PRODUCT_ID` on the target artifact, **cascading recursively down the lineage** (initiative → research/epic/narrative → stories). Returns `{ok, updated_count}`. Granted USAGE to `GUPPIWHEEL_CONTRIBUTOR`; the app role auto-authorizes via the account's FUTURE PROCEDURES grant. Product becomes a first-class wheel attribute the user assigns in Act 0, retiring the app-side `PRODUCT_BY_INIT` hardcode.
+
+### Fixed — Bob chat "(no answer)" on "run the target lifecycle"
+
+- One-shot `DATA_AGENT_RUN` can't complete a `client_side_execute` tool call, so when Bob looked up `research_id`/`product` for the lifecycle the turn ended with no final text. Now the See-the-Loop app resolves those from the wheel (product via `ARTIFACTS.PRODUCT_ID`, research via the newest RESEARCH under the initiative) and injects them into Bob's chat context, so `run_target_lifecycle` runs directly server-side. The status route also replaces the bare "(no answer)" with a useful stalled message. (The general client-side tool loop remains a future option.)
+
+### Changed
+
+- Four-way version bump to 3.26.0 + `PUBLISH_PLUGIN_VERSION` stamp.
+
 ## [3.25.0] — 2026-09-18
 
 ### Added — Agent chat store (durable, multi-user conversation memory)
