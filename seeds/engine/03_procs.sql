@@ -587,6 +587,34 @@ END;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ASSIGN_PRODUCT(VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 
 -- =============================================================================
+-- CREATE_PRODUCT — register a new product from the flow (Act-0 "add new product").
+-- Governed insert into the PRODUCTS registry (EXECUTE AS OWNER); rejects a
+-- duplicate id. The app derives a slug id from the name. Pairs with ASSIGN_PRODUCT
+-- so a user can create-and-assign a product for an initiative without leaving Act 0.
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_PRODUCT(P_PRODUCT_ID VARCHAR, P_NAME VARCHAR, P_DESCRIPTION VARCHAR DEFAULT NULL)
+RETURNS VARIANT
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+DECLARE
+    exists_n INT;
+BEGIN
+    IF (:P_PRODUCT_ID IS NULL OR TRIM(:P_PRODUCT_ID) = '' OR :P_NAME IS NULL OR TRIM(:P_NAME) = '') THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'product_id and name are required');
+    END IF;
+    SELECT COUNT(*) INTO :exists_n FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE PRODUCT_ID = :P_PRODUCT_ID;
+    IF (:exists_n > 0) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'product already exists: ' || :P_PRODUCT_ID, 'product_id', :P_PRODUCT_ID);
+    END IF;
+    INSERT INTO GUPPIWHEEL.PUBLIC.PRODUCTS (PRODUCT_ID, NAME, DESCRIPTION, STATUS, CREATED_AT)
+    SELECT :P_PRODUCT_ID, :P_NAME, :P_DESCRIPTION, 'ACTIVE', CURRENT_TIMESTAMP();
+    RETURN OBJECT_CONSTRUCT('ok', TRUE, 'product_id', :P_PRODUCT_ID);
+END;
+
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_PRODUCT(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- =============================================================================
 -- NORMALIZE_ARTIFACT_CONTENT — the ONE canonical content-shape normalizer (RULE-033).
 -- Pure function (no session): guarantees renderable types carry CONTENT.body_md.
 -- Called by BOTH write paths (CREATE_ARTIFACT + UPDATE_OWN_ARTIFACT) and the one-time
@@ -2231,6 +2259,11 @@ def run(session, research_id, parent_init, product):
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+-- RSI_ENGINE is the RSI_ONBOARD automation's execute_as role; run_target_lifecycle delegates to
+-- SYSTEM$RUN_AUTOMATION(...RSI_ONBOARD...), which calls this proc AS RSI_ENGINE. Without this grant the
+-- lifecycle fails with "Unknown user-defined function BOB_WRITE_EPIC_STORIES" (missing USAGE masked as
+-- unknown). Mirrors the BUILD_SUBSTRATE grant to RSI_ENGINE below.
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BOB_WRITE_EPIC_STORIES(VARCHAR, VARCHAR, VARCHAR) TO ROLE RSI_ENGINE;
 
 -- INVOKER-ROLE NOTE (durable re-grant): Bob's authoring TOOLS (write_epic_stories,
 -- write_narrative, build_substrate, run_target_lifecycle) run these EXECUTE AS OWNER
@@ -2408,4 +2441,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BUILD_SUBSTRATE(VARCHAR, VARCHAR, BOO
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.26.0', 'Product-in-flow: new governed ASSIGN_PRODUCT(artifact_id, product_id) proc (EXECUTE AS OWNER) validates against PRODUCTS and stamps PRODUCT_ID on the target artifact + cascades it recursively down the lineage (initiative -> research/epic/narrative -> stories). Makes product a first-class wheel attribute assigned by the user in Act 0, retiring the app-side PRODUCT_BY_INIT hardcode. Downstream the See-the-Loop app resolves product from ARTIFACTS.PRODUCT_ID and injects research_id+product into Bob''s chat context so run_target_lifecycle runs directly server-side (fixes the one-shot DATA_AGENT_RUN client-side-tool stall that returned "(no answer)").', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.27.0', 'Fix + finish product-in-flow: (1) FIX run_target_lifecycle failing with "Unknown user-defined function BOB_WRITE_EPIC_STORIES" — the RSI_ONBOARD automation runs as RSI_ENGINE (execute_as_role), which lacked USAGE on BOB_WRITE_EPIC_STORIES (BUILD_SUBSTRATE already had it); granted it so the lifecycle authors epic/stories then stops at the human provision gate as designed. (2) ADD CREATE_PRODUCT(product_id, name, description) governed proc so the user can register a new product inline from the Act-0 picker ("add new product"), then ASSIGN_PRODUCT it. Verified: RUN_TARGET_LIFECYCLE(INIT-137) reaches provision_gate=await_human with write_epic_stories=ok.', FALSE);

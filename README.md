@@ -1,4 +1,4 @@
-# guppi-platform v3.26.0
+# guppi-platform v3.27.0
 
 **Guppi** — an AI Lifecycle Platform on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel. A second database — the **RSI engine** (Level 9 · Recursion) — improves what the wheel builds, on a gated, domain-agnostic loop. Levels 2–9 of the CoCo Maturity Model.
 

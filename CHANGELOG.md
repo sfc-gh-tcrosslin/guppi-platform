@@ -2,6 +2,20 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.27.0] — 2026-09-18
+
+### Fixed — `run_target_lifecycle` "Unknown function BOB_WRITE_EPIC_STORIES"
+
+- `run_target_lifecycle` delegates to `SYSTEM$RUN_AUTOMATION('…RSI_ONBOARD…')`, and that automation's `execute_as_role` is `RSI_ENGINE`. `RSI_ENGINE` had USAGE on `BUILD_SUBSTRATE` but **not** on `BOB_WRITE_EPIC_STORIES`, so the lifecycle failed at the authoring step with `Unknown user-defined function` (missing USAGE masked as unknown). Added the missing grant (mirrors the existing `BUILD_SUBSTRATE` → `RSI_ENGINE` grant) in `seeds/engine/03_procs.sql`. Verified: `RUN_TARGET_LIFECYCLE('…','INIT-137','rwe-agent',…,'do-not',…)` now returns `write_epic_stories=ok` and stops at `provision_gate=await_human`.
+
+### Added — `CREATE_PRODUCT` (inline "add new product" in Act 0)
+
+- New governed proc `GUPPIWHEEL.PUBLIC.CREATE_PRODUCT(P_PRODUCT_ID, P_NAME, P_DESCRIPTION)` (`EXECUTE AS OWNER`): registers a new product in `PRODUCTS` (rejects duplicate id), granted USAGE to `GUPPIWHEEL_CONTRIBUTOR`. The See-the-Loop Act-0 product picker now has an "+ Add new product…" option that derives a slug id from the name, creates the product, and assigns it to the initiative in one step.
+
+### Changed
+
+- Four-way version bump to 3.27.0 + `PUBLISH_PLUGIN_VERSION` stamp.
+
 ## [3.26.0] — 2026-09-18
 
 ### Added — Product assigned in-flow (governed `ASSIGN_PRODUCT`)
