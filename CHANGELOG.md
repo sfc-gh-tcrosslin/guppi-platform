@@ -2,6 +2,15 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.28.0] — 2026-09-18
+
+### Added — `REPARENT_ARTIFACT` (owner-scoped self-serve re-parenting)
+
+- New governed proc `GUPPIWHEEL.PUBLIC.REPARENT_ARTIFACT(P_ARTIFACT_ID, P_NEW_PARENT_ID)` (`LANGUAGE SQL`, `EXECUTE AS OWNER`), granted USAGE to `GUPPIWHEEL_CONTRIBUTOR` (which `GUPPI_BUILDER` inherits). Mirrors `UPDATE_OWN_ARTIFACT`'s owner gate: a contributor can set `PARENT_ID` on an artifact **they own** (`OWNER = CURRENT_USER()`); calls against others' artifacts return `DENIED`. Pass `NULL`/`''` to unlink (top-level).
+- **Hash-chain safety:** `PARENT_ID` is part of the birth-hash bundle, but the proc deliberately does **not** recompute `ROW_HASH`. Per the attestation model (see `VERIFY_CHAIN` header), an in-place edit that leaves `PREV_HASH`/`ROW_HASH` untouched is a legitimate governed edit — the same pattern `MERGE_ARTIFACTS` uses to re-parent children. The structural chain stays intact; the row simply appears in `VERIFY_CHAIN.modified_since_birth` (informational, never a failure). Recomputing the hash would shatter the `prev→row` linkage for every later row.
+- **Guards:** artifact must exist, be LIVE, and be a single row (duplicate-ID refusal, like `RETAG_PRODUCT`); parent must exist and be LIVE; no-op refusal when already parented that way; and a `CONNECT BY` cycle/self guard (the new parent may not be the artifact or any of its descendants).
+- Used to formally link `INIT-93`/`INIT-94`/`INIT-95` under `INIT-89` (TCH Meningitis-from-Ultrasound gap sub-initiatives), replacing the naming-only convention with a structural `PARENT_ID` relationship.
+
 ## [3.27.0] — 2026-09-18
 
 ### Fixed — `run_target_lifecycle` "Unknown function BOB_WRITE_EPIC_STORIES"

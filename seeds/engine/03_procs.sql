@@ -502,6 +502,78 @@ BEGIN
     RETURN 'OK: updated ' || :P_ARTIFACT_ID;
 END;
 
+-- =============================================================================
+-- REPARENT_ARTIFACT — owner-scoped self-serve re-parenting (RULE-028)
+-- Sets ARTIFACTS.PARENT_ID for an artifact the caller OWNS (mirrors
+-- UPDATE_OWN_ARTIFACT's owner gate). PARENT_ID IS part of the birth-hash bundle,
+-- but per the attestation model (see VERIFY_CHAIN header) an in-place edit that
+-- LEAVES PREV_HASH/ROW_HASH untouched is a legitimate governed edit (MERGE_ARTIFACTS
+-- re-parents children the same way): the STRUCTURAL chain stays intact and the row
+-- simply lists in VERIFY_CHAIN.modified_since_birth (informational). Do NOT recompute
+-- ROW_HASH here — that would shatter the prev->row linkage for every later row.
+-- Guards: LIVE + single-row artifact, LIVE parent, no-op refusal, and a CONNECT BY
+-- cycle/self guard (new parent may not be the artifact or any of its descendants).
+-- Pass NULL/'' to unlink (make top-level).
+-- =============================================================================
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.REPARENT_ARTIFACT(
+  P_ARTIFACT_ID VARCHAR, P_NEW_PARENT_ID VARCHAR DEFAULT NULL
+)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+BEGIN
+    LET new_parent VARCHAR := IFF(
+        :P_NEW_PARENT_ID IS NULL OR TRIM(:P_NEW_PARENT_ID) = '' OR LOWER(TRIM(:P_NEW_PARENT_ID)) IN ('null','none'),
+        NULL, TRIM(:P_NEW_PARENT_ID));
+
+    LET n_rows INT := (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID);
+    IF (:n_rows = 0) THEN
+        RETURN 'ERROR: artifact not found: ' || :P_ARTIFACT_ID;
+    END IF;
+    IF (:n_rows > 1) THEN
+        RETURN 'ERROR: duplicate ID present; resolve before reparenting: ' || :P_ARTIFACT_ID;
+    END IF;
+
+    LET owner_check VARCHAR := (SELECT OWNER FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID);
+    LET superseded VARCHAR := (SELECT SUPERSEDED_BY FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID);
+    IF (:superseded IS NOT NULL) THEN
+        RETURN 'ERROR: artifact is superseded: ' || :P_ARTIFACT_ID;
+    END IF;
+    IF (:owner_check <> CURRENT_USER()) THEN
+        RETURN 'DENIED: not your artifact (owner=' || :owner_check || ')';
+    END IF;
+
+    LET cur_parent VARCHAR := (SELECT PARENT_ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :P_ARTIFACT_ID);
+    IF (EQUAL_NULL(:cur_parent, :new_parent)) THEN
+        RETURN 'OK (no-op): ' || :P_ARTIFACT_ID || ' already parented to ' || NVL(:new_parent, 'NULL');
+    END IF;
+
+    IF (:new_parent IS NOT NULL) THEN
+        LET p_ok INT := (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = :new_parent AND SUPERSEDED_BY IS NULL);
+        IF (:p_ok = 0) THEN
+            RETURN 'ERROR: parent not found or superseded: ' || :new_parent;
+        END IF;
+        -- Cycle/self guard: subtree of the artifact (incl. itself) must not contain the new parent.
+        LET cyc INT := (
+            SELECT COUNT(*) FROM (
+                SELECT ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+                START WITH ID = :P_ARTIFACT_ID
+                CONNECT BY PARENT_ID = PRIOR ID
+            ) WHERE ID = :new_parent
+        );
+        IF (:cyc > 0) THEN
+            RETURN 'ERROR: would create a cycle (new parent is the artifact or a descendant): ' || :new_parent;
+        END IF;
+    END IF;
+
+    UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
+       SET PARENT_ID = :new_parent, UPDATED_AT = CURRENT_TIMESTAMP()
+     WHERE ID = :P_ARTIFACT_ID;
+
+    RETURN 'OK: ' || :P_ARTIFACT_ID || ' reparented ' || NVL(:cur_parent, 'NULL') || ' -> ' || NVL(:new_parent, 'NULL');
+END;
+
 -- Read-back helper for long-form bodies. CONTENT.body_md (or full CONTENT JSON when absent) can
 -- exceed a client's cell-render cap; this returns a SUBSTR slice so callers can page through it.
 CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(
@@ -533,6 +605,8 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(VARCHAR,VARCHAR,VAR
 -- PLAT-D008b: P_LAUNCH_SPEC (4th arg) is VARCHAR (scalar JSON surface), not VARIANT — grant sig must match the live proc or the GRANT no-ops silently.
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(VARCHAR,VARCHAR,VARIANT,ARRAY) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+-- REPARENT_ARTIFACT: owner-scoped self-serve re-parenting (contributor tier; GUPPI_BUILDER inherits CONTRIBUTOR).
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.REPARENT_ARTIFACT(VARCHAR,VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH(VARCHAR,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.GET_ARTIFACT_BODY(VARCHAR,NUMBER,NUMBER) TO ROLE GUPPIWHEEL_VIEWER;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.ROCKY_EXECUTE() TO ROLE GUPPIWHEEL_ADMIN;
@@ -2441,4 +2515,4 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BUILD_SUBSTRATE(VARCHAR, VARCHAR, BOO
 -- stamp and MUST equal .cortex-plugin/plugin.json version (SDLC preflight Check
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.27.0', 'Fix + finish product-in-flow: (1) FIX run_target_lifecycle failing with "Unknown user-defined function BOB_WRITE_EPIC_STORIES" — the RSI_ONBOARD automation runs as RSI_ENGINE (execute_as_role), which lacked USAGE on BOB_WRITE_EPIC_STORIES (BUILD_SUBSTRATE already had it); granted it so the lifecycle authors epic/stories then stops at the human provision gate as designed. (2) ADD CREATE_PRODUCT(product_id, name, description) governed proc so the user can register a new product inline from the Act-0 picker ("add new product"), then ASSIGN_PRODUCT it. Verified: RUN_TARGET_LIFECYCLE(INIT-137) reaches provision_gate=await_human with write_epic_stories=ok.', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.28.0', 'ADD REPARENT_ARTIFACT(P_ARTIFACT_ID, P_NEW_PARENT_ID) — owner-scoped self-serve re-parenting (mirrors UPDATE_OWN_ARTIFACT''s owner gate; granted to GUPPIWHEEL_CONTRIBUTOR, which GUPPI_BUILDER inherits). Sets ARTIFACTS.PARENT_ID in place and deliberately does NOT recompute ROW_HASH: PARENT_ID is in the birth-hash bundle, but per the attestation model an in-place edit that leaves PREV_HASH/ROW_HASH intact is a governed edit (like MERGE_ARTIFACTS re-parenting) — structural chain stays intact, row lists in VERIFY_CHAIN.modified_since_birth (informational). Guards: LIVE + single-row artifact, LIVE parent, no-op refusal, CONNECT BY cycle/self guard (new parent may not be the artifact or a descendant), NULL/'''' unlinks. Used to link INIT-93/94/95 under INIT-89.', FALSE);
