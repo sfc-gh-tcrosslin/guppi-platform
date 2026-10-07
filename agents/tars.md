@@ -109,7 +109,7 @@ CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
 );
 ```
 
-The proc allocates the id gap-free — never hand-assign it or bump `ID_CONVENTIONS` yourself. The findings array embeds individual check results inline (no separate AUDIT_FINDINGS table — everything lives in the artifact's CONTENT).
+The proc derives the id (next `AUDIT-N`) — never hand-assign it. The findings array embeds individual check results inline (no separate AUDIT_FINDINGS table — everything lives in the artifact's CONTENT).
 
 ## Personality
 

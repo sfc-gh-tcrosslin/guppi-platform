@@ -16,8 +16,8 @@ CALL GUPPIWHEEL.PUBLIC.WHEEL('<verb>', '<json args>');
 Session state lives server-side in `WHEEL_CONTEXT`, so it is the same from CoCo Desktop, the CLI,
 agents and Slack. Run as `GUPPIWHEEL_CONTRIBUTOR`.
 
-**Never** write `GUPPIWHEEL.PUBLIC.*` tables directly, never hand-edit `ID_CONVENTIONS`, never pass an
-explicit ID. If `WHEEL` cannot do it, it is an admin repair (`WHEEL_ADMIN`, below) or a gap to report.
+**Never** write `GUPPIWHEEL.PUBLIC.*` tables directly and never pass an explicit ID for a numbered
+type (only slug types like OPS_EVENT take one). If `WHEEL` cannot do it, it is an admin repair (`WHEEL_ADMIN`, below) or a gap to report.
 
 ## Client awareness (do this first)
 
@@ -41,11 +41,12 @@ context  ->  open  ->  story  ->  (build)  ->  ship  ->  capture / plan
 |---|---|---|
 | `context` | `{"client":"coco_desktop"}` | Records the client; returns current initiative/story/product, client capabilities, open **capture debt**, last-24h **tripwire** hits, stale `Building` stories, and guidance. **First call of every session.** |
 | `open` | `{"title","product"}` or `{"parent":"INIT-N"}` | **Reuses** the best existing initiative/epic for the product and sets context to it. Mints new only with `"force":true,"reason":"..."`. Never mint because the title is new. |
-| `story` | `{"title","content"?, "stage"?, "product"?, "parent"?}` | Creates a STORY under the current context. ID allocated by `CREATE_ARTIFACT`; a lagging counter is auto-resynced once. Sets it as current story. |
+| `story` | `{"title","content"?, "stage"?, "product"?, "parent"?}` | Creates a STORY under the current context. ID derived by `CREATE_ARTIFACT` (next `<PRODUCT_PREFIX>-N`). Sets it as current story. |
 | `ship` | `{"note","id"?, "stage"?="Built"}` | Advances the story (`ADVANCE_STAGE`), appends the note to `CONTENT.shipped[]`, clears the product's open capture debt. **Call after every deploy / agent release / milestone, in the same turn.** |
 | `capture` | `{"stage_path","title","description"?, "kind"?="APP", "app_type"?, "parent"?}` | Registers a deliverable you already `PUT` (see below). Inherits the parent's product. |
 | `plan` | `{"title","sections":{"summary","context","phased_plan","risks","why_now"}}` | Publishes a plan as an `internal_plan` NARRATIVE under context. |
 | `reparent` | `{"id","parent","reason"}` | Moves an artifact you own (`REPARENT_ARTIFACT`). |
+| `preview` | `{"type","product"?}` | The ID that would be allocated next (read-only). |
 | `help` | `{}` | Lists verbs. |
 
 Examples:
@@ -86,12 +87,21 @@ a backstop, not a substitute for shipping in-turn. A new product needs a `PRODUC
 (use `plan`, or `CREATE_NARRATIVE` for other templates). APP = bespoke interactive output (hand-built
 deck, WebGL hero, Streamlit). Do not label a hand-built deck a NARRATIVE.
 
+## IDs (3.32.0): derived, never counted
+
+- **Global types** take their prefix from `TYPE_REGISTRY.ID_PREFIX` (`INIT-`, `E-`, `NAR-`, `APP-`, `W-`, `AUDIT-`...).
+- **STORY / DEFECT** take the product's stem: `PRODUCTS.ID_PREFIX` + `-` (story) or `-D` (defect): `PLAT-62`, `PLAT-D9`.
+- The number is `MAX(existing)+1`, computed by `CREATE_ARTIFACT` inside the lock that serializes every insert
+  (`ID_SERIES_V` is the one definition). No counters, so nothing can drift and nothing needs resyncing.
+- **New product** = `CREATE_PRODUCT(id, name, description)`. Its stem defaults to the id upper-cased, letters/digits
+  only (`my-product` -> `MYPRODUCT`); a shorter stem is `SET_PRODUCT_PREFIX` (admin). A stem is never shared.
+- An unregistered product, or a numbered type with no prefix, is a **loud error** with a hint, never a silent fallback.
+
 ## Admin repairs — `WHEEL_ADMIN` (GUPPIWHEEL_ADMIN only)
 
 | Verb | Args | Delegates to |
 |---|---|---|
 | `merge` | `{"duplicate","survivor","reason"}` | `MERGE_ARTIFACTS` (re-parents children, supersedes the duplicate) |
-| `resync` | `{"entity","reason"}` | `RESYNC_ID_SERIES` (forward-only counter repair) |
 | `retag` | `{"id","product","reason"}` | `RETAG_PRODUCT` |
 
 Kept out of `WHEEL` on purpose: `WHEEL` runs as owner, so wrapping admin procs there would hand admin

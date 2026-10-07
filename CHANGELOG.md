@@ -2,6 +2,60 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.32.0] — 2026-10-07
+
+### Changed — IDs are derived from data; ID_CONVENTIONS counters retired (PLAT-61)
+
+**Why.** An ID depended on three tables plus a stored counter: `TYPE_REGISTRY` built an entity key,
+`ID_CONVENTIONS` held prefix + `NEXT_SEQ` (no uniqueness, no single row per entity, silent
+auto-registration), and `PRODUCTS` separately decided whether the product was stamped. Stored counters
+drift, which is why `RESYNC_ID_SERIES`, the collision error, WHEEL's auto-resync and the Aug-14
+duplicate-ID incident existed. Live symptoms: AUDIT had 4 registry rows with 3 prefixes; `GUPPI-` was
+shared by STORY and DEFECT (the next guppi defect would have been the existing GUPPI-3); product
+`platform` minted a stray `PLATFORM-` defect series; and products with an ID series but no `PRODUCTS`
+row were born untagged (46 stories across 5 products on the origin account).
+
+- **No counters.** The next number is `MAX(existing)+1` for the prefix, from the new **`ID_SERIES_V`**
+  (the one definition). `CREATE_ARTIFACT` reads it **inside** the `CHAIN_HEAD` row lock that already
+  serializes every insert, so concurrent writers cannot collide. Superseded rows still count, so an ID
+  is never reused. Only strictly `<PREFIX><digits>` IDs count (slug IDs and longer prefixes never interfere).
+- **Prefixes in two places.** Global types: `TYPE_REGISTRY.ID_PREFIX` (now a real prefix; NULL = explicit
+  slug ID required; MODEL/DASHBOARD mint in `APP-`). STORY/DEFECT: new **`PRODUCTS.ID_PREFIX`** stem +
+  new `TYPE_REGISTRY.PRODUCT_ID_SUFFIX` (STORY `''`, DEFECT `'D'`): `PLAT-62`, `PLAT-D9`, `GUPPI-D1`.
+- **Fail loudly.** Unregistered product, product without a stem, missing product on a product-scoped
+  type, or a numbered type without a prefix -> error with a hint. No auto-registration.
+- **`CREATE_PRODUCT`** now sets a unique stem: default = id upper-cased, alphanumerics only
+  (`my-product` -> `MYPRODUCT`, the same names auto-registration produced); refuses a stem already in
+  use. New admin **`SET_PRODUCT_PREFIX(product, stem, reason)`** (logged to VIOLATIONS) for shorter stems.
+- New read-only **`PREVIEW_NEXT_ID(type, product)`** and **`WHEEL('preview', ...)`**.
+- **Retired:** `NEXT_SEQ` allocation, the collision branch, WHEEL auto-resync, `WHEEL_ADMIN resync`.
+  `RESYNC_ID_SERIES` is a no-op (kept so callers don't break). `ID_CONVENTIONS` is DEPRECATED and
+  read-only for one release, then dropped.
+- Stewart (`PROPOSE_CORRECTION`) files proposals under product `guppi` (+ `stewart` tag) instead of the
+  non-product key `STEWART`.
+- `OPS_DIGEST_V`: registry checks replaced by `product_prefix_shared`, `product_missing_prefix`,
+  `duplicate_artifact_ids`.
+
+### Data (seeds/upgrades/3.31.0-to-3.32.0.sql, applied 2026-10-07)
+
+- Stems derived per account (keep the existing story stem, else the CREATE_PRODUCT default); no product names in the repo. On the origin account: 26 products, 3 account-local overrides via SET_PRODUCT_PREFIX semantics; RSI/Stewart fold
+  into `guppi`). Registered 4 products that owned a story series but had no PRODUCTS row; tagged their
+  29 artifacts via `ASSIGN_PRODUCT` on each root (all previously untagged; nothing overwritten).
+- Parity: `ID_SERIES_V` matched an independent regex MAX+1 on all 65 series. It agreed with every
+  correct old counter (INIT-154, E-51, NAR-119, APP-19, W-19) and exposed a wrong one (INCIDENT counter 5;
+  no `INC-<n>` exists).
+- The upgrade's own `TYPE_REGISTRY` UPDATEs appear in `DIRECT_DML_TRIPWIRE_V` (7 rows): expected,
+  audited migration DML.
+
+### Security finding (PLAT-D9, decision pending)
+
+- A schema **future grant** (2026-09-18) gives `USAGE` on **every** new `GUPPIWHEEL.PUBLIC` procedure to
+  `RSI_APP_READER` and `RSI_ENGINE`, and it re-fires on every `CREATE OR REPLACE`. Admin and human-gate
+  procs are exposed (incl. `FORGE_APPROVE`). This release revokes it from the procs it touches
+  (`WHEEL_ADMIN`, `SET_PRODUCT_PREFIX`, `RESYNC_ID_SERIES`, `PROPOSE_CORRECTION`) and the seeds now
+  re-revoke after each create. All 54 procs' grants verified identical to pre-deploy. Replacing the blanket
+  future grant needs an owner decision.
+
 ## [3.31.0] — 2026-10-06
 
 ### Changed — operational layer: one front door, server-side, client-aware (PLAT-60)

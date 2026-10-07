@@ -26,7 +26,7 @@ you no longer have Guppi, you have something else. The conformance gate (below) 
 
 1. **Single source of truth.** Every artifact type lives in `GUPPIWHEEL.PUBLIC.ARTIFACTS`. No parallel tables of record.
 2. **No duplicate IDs, ever.** `DUPLICATE_ID_SCREAM_V` must read 0 rows; `COUNT(DISTINCT ID) = COUNT(*)`.
-3. **Gap-free sequential IDs.** Allocated atomically from the `ID_CONVENTIONS` registry (UPDATE-then-read inside the one write proc). **Do not** use Snowflake `SEQUENCE` objects for IDs — they leave large gaps.
+3. **Gap-free sequential IDs, derived from data.** `MAX(existing)+1` per prefix (`ID_SERIES_V`), taken inside `CREATE_ARTIFACT`'s chain lock (3.32.0). No stored counters, so nothing drifts. Prefixes live in `TYPE_REGISTRY.ID_PREFIX` (global) and `PRODUCTS.ID_PREFIX` (STORY/DEFECT). **Do not** use Snowflake `SEQUENCE` objects for IDs — they leave large gaps.
 4. **One gated write path.** `CREATE_ARTIFACT` is the only way artifacts are written; direct `INSERT` on `ARTIFACTS` is revoked. Add new write behavior *through* the proc, not around it.
 5. **Doctrine is data.** Enabled rows in `RULES` are authoritative. Agents read doctrine; they do not paraphrase or hardcode it.
 6. **Sub-agents propose, never change doctrine** (RULE-027 / STO-36-O). A sub-agent (e.g. Stewart) emits proposal artifacts. It never writes `RULES`, never sets `SUPERSEDED_BY`, never edits serving surfaces. This is structural, not just RBAC — and Stewart also watches the owner's own writes, because the table owner bypasses RBAC.

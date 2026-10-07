@@ -82,7 +82,7 @@ SELECT ID, TYPE, STAGE, TITLE, PARENT_ID FROM lineage ORDER BY CREATED_AT;
 
 > **For day-to-day work use the `wheel` skill:** `CALL GUPPIWHEEL.PUBLIC.WHEEL(verb, args)` with
 > `context`, `open` (reuses an existing home), `story`, `ship`, `capture`, `plan`. It wraps the procs
-> below with the right defaults (product inheritance, NULL-safe binds, collision auto-resync). The
+> below with the right defaults (product inheritance, NULL-safe binds). The
 > decision tree here is the reference for what `WHEEL` calls underneath.
 
 Writes go through governed `EXECUTE AS OWNER` procs. Do **not** `INSERT INTO ARTIFACTS` directly
@@ -119,8 +119,9 @@ Mixing both? Put prose under a `body_md` key alongside your structured keys. The
 - `CREATE_ARTIFACT` returns **VARIANT** → read via `SELECT TO_JSON("CREATE_ARTIFACT") FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))`.
 
 ### IDs / product scoping
-- Global series (INITIATIVE→`INIT-N`) and product-scoped STORY series live in `ID_CONVENTIONS`. STORY is `ID_PRODUCT_SCOPED` → entity `STORY_<PRODUCT>`.
-- **Platform/guppi tooling stories** use the `PLAT-N` series via an **explicit** `P_EXPLICIT_ID='PLAT-N'` with product `guppi` (the `STORY_GUPPI` series is unregistered — documented quirk; follow precedent, don't invent a new series mid-task).
+- **Derived, never counted (3.32.0).** Global types use `TYPE_REGISTRY.ID_PREFIX` (`INIT-`, `E-`, `NAR-`, `APP-`, `W-`, `AUDIT-`). STORY/DEFECT use `PRODUCTS.ID_PREFIX` + `-` / `-D`. The number is `MAX+1` from `ID_SERIES_V`, taken inside `CREATE_ARTIFACT`'s chain lock. `PREVIEW_NEXT_ID(type, product)` shows it read-only.
+- **Platform tooling stories:** product `platform` -> `PLAT-N`. Guppi doctrine/RSI/Stewart stories: product `guppi` -> `GUPPI-N` (tag `rsi`/`stewart`). Never pass `P_EXPLICIT_ID` for a numbered type; the old explicit-`PLAT-N` workaround is what desynced the counter before 3.32.0.
+- **Unregistered product = error.** Register with `CREATE_PRODUCT` first (that also sets the stem).
 
 ### WIDGET — the single-source rule
 A WIDGET is a **governed catalog entry that points to a reusable building block** (a proc, UDF, HTML pattern, python module, …) living anywhere in the account. The artifact carries the metadata; the impl lives in a library home (e.g. `GUPPI_LIB.LIB`). **As of 3.23.0 the canonical `GUPPI_LIB` widget library ships with this plugin** (`seeds/library/01_widget_library.sql` + `assets/widgets/*` + `seeds/content/widget_catalog.sql`) — the repo is the source of truth and a live `GUPPI_LIB.LIB` is a deployment of it. The library is least-privilege: the **`GUPPI_LIB_STEWARD`** role owns the schema/stage/objects; the named Guppi family consumes (VIEWER read / CONTRIBUTOR+ADMIN run); never PUBLIC.

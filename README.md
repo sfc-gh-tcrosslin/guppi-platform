@@ -1,4 +1,4 @@
-# guppi-platform v3.31.0
+# guppi-platform v3.32.0
 
 **Guppi** — an AI Lifecycle Platform on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel. A second database — the **RSI engine** (Level 9 · Recursion) — improves what the wheel builds, on a gated, domain-agnostic loop. Levels 2–9 of the CoCo Maturity Model.
 
@@ -203,6 +203,8 @@ things worth acting on:
   with `CALL GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES('<ENTITY>', '<reason>')`. This query found
   six additional desynced series on the origin account beyond the one already known, so it
   is worth running even if nothing looks broken.
+  **Superseded in 3.32.0:** IDs are derived from data (`ID_SERIES_V`), so there are no counters to
+  drift and `RESYNC_ID_SERIES` is a no-op. Apply `seeds/upgrades/3.31.0-to-3.32.0.sql` instead.
 
 
 ## What you get
@@ -212,7 +214,7 @@ GUPPIWHEEL.PUBLIC
 ├── ARTIFACTS              -- single source of truth (every type)
 ├── RULES                  -- governance as data (RULE-013..029 + STG/CMP/QAL/TMG)
 ├── VIOLATIONS             -- where broken rules land
-├── ID_CONVENTIONS         -- gap-free ID registry (ENTITY, NEXT_SEQ, ID_PREFIX) — atomic, no SEQUENCE objects
+├── ID_SERIES_V            -- derived ID series (prefix + MAX in data -> NEXT_ID); ID_CONVENTIONS deprecated 3.32.0
 ├── INITIATIVE_STEPS       -- Rocky step logs
 ├── PRODUCTS               -- product groupings (used by viewer)
 ├── ARTIFACT_LAUNCHES      -- audit log of every artifact open
@@ -229,7 +231,7 @@ GUPPIWHEEL.PUBLIC
 ├── ROCKY_EXECUTE proc     -- Rocky's per-cycle handler
 ├── PUBLISH_ARTIFACT proc  -- register a launchable
 ├── RETAG_PRODUCT proc     -- governed PRODUCT_ID change (admin) — the share boundary
-├── RESYNC_ID_SERIES proc  -- forward-only ID counter repair (admin)
+├── CREATE_PRODUCT proc    -- register a product + its unique ID stem (SET_PRODUCT_PREFIX = admin override)
 ├── STEWART_AUDIT proc     -- read-only grounding/hygiene scan (writes one AUDIT artifact)
 ├── PROPOSE_CORRECTION proc -- file a fix proposal as a STORY (never auto-applied)
 ├── GET_ARTIFACT_LAUNCH    -- resolve to URL/identifier (presigned + audited)

@@ -12,11 +12,11 @@
 -- (RULE-028/029). CURRENT_USER() inside EXECUTE AS OWNER is the caller, so the
 -- owner-gated procs still check the real user.
 --
--- Contributor verbs : context, open, story, ship, capture, plan, reparent, help
--- Admin verbs       : WHEEL_ADMIN(merge | resync | retag)  (GUPPIWHEEL_ADMIN only;
+-- Contributor verbs : context, open, story, ship, capture, plan, reparent, preview, help
+-- Admin verbs       : WHEEL_ADMIN(merge | retag)  (GUPPIWHEEL_ADMIN only;
 --                     wrapping them in WHEEL would launder admin power to contributors)
--- Exception (safe)  : story/open auto-call RESYNC_ID_SERIES for the ONE entity that
---                     just collided. Forward-only + logged to VIOLATIONS.
+-- IDs (3.32.0)      : derived by CREATE_ARTIFACT (MAX+1 via ID_SERIES_V under the CHAIN_HEAD lock).
+--                     No counters, so no resync. PREVIEW_NEXT_ID shows the next ID read-only.
 --
 -- Ownership: ACCOUNTADMIN, like every other substrate object (see 03_procs.sql).
 -- =============================================================================
@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.CAPTURE_DEBT (
 -- WHEEL(verb, args) — the front door
 -- =============================================================================
 CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.WHEEL(P_VERB VARCHAR, P_ARGS VARCHAR DEFAULT '{}')
+COPY GRANTS
 RETURNS VARIANT
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
@@ -108,6 +109,7 @@ VERBS = {
   "capture":  "{stage_path, title, description?, kind?='APP'|'NARRATIVE', app_type?} -> register a PUT deliverable via PUBLISH_ARTIFACT.",
   "plan":     "{title, sections{summary,context,phased_plan,risks,why_now}, parent?} -> internal_plan NARRATIVE via CREATE_NARRATIVE.",
   "reparent": "{id, parent, reason} -> REPARENT_ARTIFACT (owner-gated).",
+  "preview":  "{type, product?} -> the ID CREATE_ARTIFACT would allocate next (read-only).",
   "help":     "{} -> this list.",
 }
 TERMINAL = ("Built", "Published", "Resolved", "RESOLVED", "Narrated", "TRACKED")
@@ -167,15 +169,7 @@ def live(session, aid):
 def create_artifact(session, typ, title, product, content, parent, stage, tags):
     args = [typ, title, product, json.dumps(content or {}), b(parent), stage, json.dumps(tags or []), NUL, NUL]
     sql = "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, ?, ?, NULLIF(?, '__WHEEL_NULL__'), ?, ?, NULLIF(?, '__WHEEL_NULL__'), NULLIF(?, '__WHEEL_NULL__'))"
-    res = call(session, sql, args)
-    if isinstance(res, dict) and "COLLISION" in str(res.get("error", "")).upper() and res.get("entity"):
-        # Counter behind data: the one governed repair, then retry once.
-        fix = call(session, "CALL GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(?, ?)",
-                   [res["entity"], "WHEEL auto-resync after allocation collision on " + str(res.get("id"))])
-        res = call(session, sql, args)
-        if isinstance(res, dict):
-            res["auto_resync"] = fix
-    return res
+    return call(session, sql, args)
 
 # ---------------------------------------------------------------- verbs
 def v_context(session, user, a):
@@ -335,6 +329,16 @@ def v_reparent(session, user, a):
         return {"error": "reparent needs id + parent + reason"}
     return call(session, "CALL GUPPIWHEEL.PUBLIC.REPARENT_ARTIFACT(?, NULLIF(?, '__WHEEL_NULL__'), ?)", [a["id"], b(a.get("parent")), a["reason"]])
 
+def v_preview(session, user, a):
+    t = (a.get("type") or "STORY").upper()
+    product = (a.get("product") or get_ctx(session, user).get("product") or "").lower() or None
+    r = q(session, "SELECT GUPPIWHEEL.PUBLIC.PREVIEW_NEXT_ID(?, NULLIF(?, '__WHEEL_NULL__'))", [t, b(product)])
+    nid = r[0][0] if r else None
+    out = {"type": t, "product": product, "next_id": nid}
+    if nid is None:
+        out["why"] = "descriptive-ID type (pass an explicit id) or unregistered product (CREATE_PRODUCT)"
+    return out
+
 def run(session, p_verb, p_args):
     verb = (p_verb or "help").strip().lower()
     try:
@@ -343,7 +347,7 @@ def run(session, p_verb, p_args):
         return {"error": "P_ARGS must be a JSON object string", "detail": str(e)}
     user = me(session)
     fn = {"context": v_context, "open": v_open, "story": v_story, "ship": v_ship, "capture": v_capture,
-          "plan": v_plan, "reparent": v_reparent}.get(verb)
+          "plan": v_plan, "reparent": v_reparent, "preview": v_preview}.get(verb)
     if fn is None:
         return {"verbs": VERBS} if verb == "help" else {"error": "unknown verb '%s'" % verb, "verbs": VERBS}
     try:
@@ -359,12 +363,13 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.WHEEL(VARCHAR, VARCHAR) TO ROLE GUPPI
 -- WHEEL_ADMIN(verb, args) — admin-only repairs (MERGE/RESYNC/RETAG are RULE-027 admin)
 -- =============================================================================
 CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.WHEEL_ADMIN(P_VERB VARCHAR, P_ARGS VARCHAR DEFAULT '{}')
+COPY GRANTS
 RETURNS VARIANT
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'run'
-COMMENT = 'Admin repairs: merge {duplicate,survivor,reason} | resync {entity,reason} | retag {id,product,reason}. GUPPIWHEEL_ADMIN only.'
+COMMENT = 'Admin repairs: merge {duplicate,survivor,reason} | retag {id,product,reason}. GUPPIWHEEL_ADMIN only.'
 EXECUTE AS OWNER
 AS
 $$
@@ -376,12 +381,10 @@ def run(session, p_verb, p_args):
         return {"error": "reason required (audit trail)"}
     if v == "merge":
         sql, p = "CALL GUPPIWHEEL.PUBLIC.MERGE_ARTIFACTS(?, ?, ?)", [a["duplicate"], a["survivor"], a["reason"]]
-    elif v == "resync":
-        sql, p = "CALL GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(?, ?)", [a["entity"], a["reason"]]
     elif v == "retag":
         sql, p = "CALL GUPPIWHEEL.PUBLIC.RETAG_PRODUCT(?, ?, ?)", [a["id"], a["product"], a["reason"]]
     else:
-        return {"error": "verbs: merge, resync, retag"}
+        return {"error": "verbs: merge, retag (IDs are derived in 3.32.0; there is no resync)"}
     r = session.sql(sql, params=p).collect()
     v0 = r[0][0] if r else None
     try:
@@ -393,3 +396,9 @@ $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.WHEEL_ADMIN(VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
 GRANT SELECT ON TABLE GUPPIWHEEL.PUBLIC.CLIENT_CAPABILITIES TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 GRANT SELECT ON TABLE GUPPIWHEEL.PUBLIC.PRODUCT_FOOTPRINT  TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- Least privilege despite the schema FUTURE GRANT (USAGE on every new procedure -> RSI_APP_READER,
+-- RSI_ENGINE; see PLAT-D9). That grant re-fires on every CREATE OR REPLACE, so an admin proc must
+-- revoke it right after creation, every deploy.
+REVOKE USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.WHEEL_ADMIN(VARCHAR, VARCHAR) FROM ROLE RSI_APP_READER;
+REVOKE USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.WHEEL_ADMIN(VARCHAR, VARCHAR) FROM ROLE RSI_ENGINE;

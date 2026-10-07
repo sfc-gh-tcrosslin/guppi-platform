@@ -789,22 +789,96 @@ RETURNS VARIANT
 LANGUAGE SQL
 EXECUTE AS OWNER
 AS
+$$
 DECLARE
     exists_n INT;
+    stem VARCHAR;
+    stem_taken INT;
 BEGIN
     IF (:P_PRODUCT_ID IS NULL OR TRIM(:P_PRODUCT_ID) = '' OR :P_NAME IS NULL OR TRIM(:P_NAME) = '') THEN
         RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'product_id and name are required');
     END IF;
-    SELECT COUNT(*) INTO :exists_n FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE PRODUCT_ID = :P_PRODUCT_ID;
+    SELECT COUNT(*) INTO :exists_n FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE LOWER(PRODUCT_ID) = LOWER(:P_PRODUCT_ID);
     IF (:exists_n > 0) THEN
         RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'product already exists: ' || :P_PRODUCT_ID, 'product_id', :P_PRODUCT_ID);
     END IF;
-    INSERT INTO GUPPIWHEEL.PUBLIC.PRODUCTS (PRODUCT_ID, NAME, DESCRIPTION, STATUS, CREATED_AT)
-    SELECT :P_PRODUCT_ID, :P_NAME, :P_DESCRIPTION, 'ACTIVE', CURRENT_TIMESTAMP();
-    RETURN OBJECT_CONSTRUCT('ok', TRUE, 'product_id', :P_PRODUCT_ID);
+    -- 3.32.0: every product gets a unique ID stem (STORY <stem>-N, DEFECT <stem>-DN). Default = the
+    -- id upper-cased with non-alphanumerics removed ('my-product' -> 'MYPRODUCT'). Shorter stems
+    -- (PLAT, IMG) via SET_PRODUCT_PREFIX (admin). A stem may never be shared.
+    stem := UPPER(REGEXP_REPLACE(:P_PRODUCT_ID, '[^A-Za-z0-9]', ''));
+    SELECT COUNT(*) INTO :stem_taken FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE ID_PREFIX = :stem;
+    IF (:stem_taken > 0) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'default ID stem already used by another product: ' || :stem,
+                                'hint', 'choose a different product_id, or register then SET_PRODUCT_PREFIX (admin)');
+    END IF;
+    INSERT INTO GUPPIWHEEL.PUBLIC.PRODUCTS (PRODUCT_ID, NAME, DESCRIPTION, STATUS, CREATED_AT, ID_PREFIX)
+    SELECT LOWER(:P_PRODUCT_ID), :P_NAME, :P_DESCRIPTION, 'ACTIVE', CURRENT_TIMESTAMP(), :stem;
+    RETURN OBJECT_CONSTRUCT('ok', TRUE, 'product_id', LOWER(:P_PRODUCT_ID), 'id_prefix', :stem,
+                            'story_ids', :stem || '-N', 'defect_ids', :stem || '-DN');
 END;
+$$;
 
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.CREATE_PRODUCT(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
+
+-- SET_PRODUCT_PREFIX — the ONLY writer of PRODUCTS.ID_PREFIX after creation (admin). Refuses a stem
+-- already used by another product. Existing IDs never change; a new stem only affects future
+-- allocation (old IDs stay valid and keep counting toward their own prefix). Logged to VIOLATIONS
+-- as an acknowledged admin act.
+CREATE OR REPLACE PROCEDURE GUPPIWHEEL.PUBLIC.SET_PRODUCT_PREFIX(P_PRODUCT_ID VARCHAR, P_STEM VARCHAR, P_REASON VARCHAR)
+RETURNS VARIANT
+LANGUAGE SQL
+EXECUTE AS OWNER
+AS
+$$
+DECLARE
+    n INT;
+    clean_stem VARCHAR;
+    old_stem VARCHAR;
+BEGIN
+    IF (:P_REASON IS NULL OR TRIM(:P_REASON) = '') THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'P_REASON required (audit trail)');
+    END IF;
+    clean_stem := UPPER(TRIM(:P_STEM));
+    IF (NOT REGEXP_LIKE(:clean_stem, '[A-Z][A-Z0-9]{0,29}')) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'stem must be A-Z/0-9, start with a letter, max 30');
+    END IF;
+    SELECT COUNT(*) INTO :n FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE LOWER(PRODUCT_ID) = LOWER(:P_PRODUCT_ID);
+    IF (:n = 0) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'unknown product: ' || :P_PRODUCT_ID);
+    END IF;
+    SELECT COUNT(*) INTO :n FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE ID_PREFIX = :clean_stem AND LOWER(PRODUCT_ID) <> LOWER(:P_PRODUCT_ID);
+    IF (:n > 0) THEN
+        RETURN OBJECT_CONSTRUCT('ok', FALSE, 'error', 'stem already used by another product: ' || :clean_stem);
+    END IF;
+    SELECT ID_PREFIX INTO :old_stem FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE LOWER(PRODUCT_ID) = LOWER(:P_PRODUCT_ID);
+    UPDATE GUPPIWHEEL.PUBLIC.PRODUCTS SET ID_PREFIX = :clean_stem WHERE LOWER(PRODUCT_ID) = LOWER(:P_PRODUCT_ID);
+    INSERT INTO GUPPIWHEEL.PUBLIC.VIOLATIONS (RULE_ID, ARTIFACT_ID, STATUS, OVERRIDE_REASON)
+    SELECT 'RULE-029', 'PRODUCT_PREFIX:' || LOWER(:P_PRODUCT_ID), 'acknowledged',
+           'SET_PRODUCT_PREFIX ' || COALESCE(:old_stem, 'NULL') || ' -> ' || :clean_stem || '. ' || :P_REASON;
+    RETURN OBJECT_CONSTRUCT('ok', TRUE, 'product_id', LOWER(:P_PRODUCT_ID), 'from', :old_stem, 'to', :clean_stem);
+END;
+$$;
+
+GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SET_PRODUCT_PREFIX(VARCHAR, VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+-- Admin-only: undo the schema FUTURE GRANT to RSI roles (re-fires on every CREATE OR REPLACE; PLAT-D9).
+REVOKE USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SET_PRODUCT_PREFIX(VARCHAR, VARCHAR, VARCHAR) FROM ROLE RSI_APP_READER;
+REVOKE USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.SET_PRODUCT_PREFIX(VARCHAR, VARCHAR, VARCHAR) FROM ROLE RSI_ENGINE;
+
+-- PREVIEW_NEXT_ID — read-only: the ID CREATE_ARTIFACT would allocate right now (same ID_SERIES_V).
+CREATE OR REPLACE FUNCTION GUPPIWHEEL.PUBLIC.PREVIEW_NEXT_ID(P_TYPE VARCHAR, P_PRODUCT VARCHAR)
+RETURNS VARCHAR
+COMMENT = '3.32.0: next ID for (type, product) from ID_SERIES_V. NULL = descriptive-ID type or unregistered product.'
+AS
+$$
+  SELECT ANY_VALUE(v.NEXT_ID)
+  FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY r
+  JOIN GUPPIWHEEL.PUBLIC.ID_SERIES_V v
+    ON v.TYPE = IFF(r.ID_PRODUCT_SCOPED, r.TYPE, COALESCE(NULLIF(r.ID_SERIES_ENTITY, r.TYPE), r.TYPE))
+   AND EQUAL_NULL(v.PRODUCT_ID, IFF(r.ID_PRODUCT_SCOPED, LOWER(P_PRODUCT), NULL))
+  WHERE r.TYPE = UPPER(P_TYPE)
+$$;
+
+GRANT USAGE ON FUNCTION GUPPIWHEEL.PUBLIC.PREVIEW_NEXT_ID(VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 
 -- =============================================================================
 -- NORMALIZE_ARTIFACT_CONTENT — the ONE canonical content-shape normalizer (RULE-033).
@@ -1133,38 +1207,41 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
                     "deduped": True,
                     "note": "idempotent: byte-identical live artifact already exists; returned existing ID (no new row, no ID burned)"}
 
-    if isinstance(p_explicit_id, str) and p_explicit_id.strip():
+    explicit = isinstance(p_explicit_id, str) and bool(p_explicit_id.strip())
+    if explicit:
         new_id = p_explicit_id.strip()
         if _count(session, "SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", [new_id]) > 0:
             return {"error": "DUPLICATE: id already exists", "id": new_id}
     else:
-        prod = (p_product if isinstance(p_product, str) else "").upper().strip()
-        # ID-series mapping is governance-as-data in TYPE_REGISTRY (no hardcoded type list):
-        #   ID_PRODUCT_SCOPED -> entity is TYPE_<PRODUCT> (STORY/DEFECT); ID_SERIES_ENTITY -> that
-        #   explicit entity (APP/MODEL/DASHBOARD -> 'APP'); else the entity is the TYPE itself.
+        # 3.32.0: IDs are DERIVED, not counted. Resolve the series here (fail loudly), but take the
+        # number from ID_SERIES_V *inside* the CHAIN_HEAD lock below, so no two writers can race.
         sr = session.sql(
-            "SELECT ID_SERIES_ENTITY, ID_PRODUCT_SCOPED FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE TYPE = ?",
+            "SELECT ID_PREFIX, ID_SERIES_ENTITY, ID_PRODUCT_SCOPED FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE TYPE = ?",
             params=[t]
-        ).collect()
-        if sr and sr[0]["ID_PRODUCT_SCOPED"]:
-            ent = t + "_" + prod
-        elif sr and sr[0]["ID_SERIES_ENTITY"]:
-            ent = sr[0]["ID_SERIES_ENTITY"]
+        ).collect()[0]
+        series_type = t
+        series_product = None
+        if sr["ID_PRODUCT_SCOPED"]:
+            sp = (p_product if isinstance(p_product, str) else "").lower().strip()
+            if not sp:
+                return {"error": "P_PRODUCT required for " + t + " (product-scoped ID)",
+                        "hint": "pass a registered product, e.g. 'platform'"}
+            pr = session.sql("SELECT ID_PREFIX FROM GUPPIWHEEL.PUBLIC.PRODUCTS WHERE LOWER(PRODUCT_ID) = ?",
+                             params=[sp]).collect()
+            if not pr:
+                return {"error": "unregistered product: " + sp,
+                        "hint": "CALL GUPPIWHEEL.PUBLIC.CREATE_PRODUCT('<id>', '<name>', '<description>') first"}
+            if not pr[0]["ID_PREFIX"]:
+                return {"error": "product has no ID_PREFIX: " + sp,
+                        "hint": "CALL GUPPIWHEEL.PUBLIC.SET_PRODUCT_PREFIX('<id>', '<STEM>', '<reason>') (admin)"}
+            series_product = sp
         else:
-            ent = t
-        reg = session.sql(
-            "SELECT ID_PREFIX, NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?",
-            params=[ent]
-        ).collect()
-        if not reg or reg[0]["ID_PREFIX"] is None or reg[0]["NEXT_SEQ"] is None:
-            return {"error": "no registered series; supply P_EXPLICIT_ID or register a convention",
-                    "entity": ent, "hint": "STORY/DEFECT require P_PRODUCT"}
-        prefix = reg[0]["ID_PREFIX"]
-        session.sql("UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = NEXT_SEQ + 1 WHERE ENTITY = ?", params=[ent]).collect()
-        nv = session.sql("SELECT NEXT_SEQ - 1 AS C FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?", params=[ent]).collect()[0]["C"]
-        new_id = prefix + str(nv)
-        if _count(session, "SELECT COUNT(*) AS C FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = ?", [new_id]) > 0:
-            return {"error": "ALLOCATION COLLISION (counter behind data)", "id": new_id, "entity": ent}
+            if sr["ID_SERIES_ENTITY"] and sr["ID_SERIES_ENTITY"] != t:
+                series_type = sr["ID_SERIES_ENTITY"]   # MODEL/DASHBOARD mint in the APP- series
+            if not session.sql("SELECT ID_PREFIX FROM GUPPIWHEEL.PUBLIC.TYPE_REGISTRY WHERE TYPE = ?",
+                               params=[series_type]).collect()[0]["ID_PREFIX"]:
+                return {"error": t + " uses descriptive IDs: pass P_EXPLICIT_ID", "type": t}
+        new_id = None
 
     tags = _asobj(p_tags, [])
     if not isinstance(tags, list):
@@ -1187,6 +1264,17 @@ def run(session, p_type, p_title, p_product, p_content, p_parent_id, p_stage, p_
     session.sql("BEGIN").collect()
     try:
         session.sql("UPDATE GUPPIWHEEL.PUBLIC.CHAIN_HEAD SET LAST_HASH = LAST_HASH WHERE CHAIN_ID = 'main'").collect()
+        if new_id is None:
+            # Derived allocation (3.32.0): MAX(existing)+1 from ID_SERIES_V, read while holding the
+            # CHAIN_HEAD row lock that serializes every CREATE_ARTIFACT insert.
+            nx = session.sql(
+                "SELECT NEXT_ID FROM GUPPIWHEEL.PUBLIC.ID_SERIES_V WHERE TYPE = ? AND EQUAL_NULL(PRODUCT_ID, NULLIF(?, 'None'))",
+                params=[series_type, series_product]
+            ).collect()
+            if not nx:
+                session.sql("ROLLBACK").collect()
+                return {"error": "no ID series for " + series_type + (("/" + series_product) if series_product else "")}
+            new_id = nx[0]["NEXT_ID"]
         prev_hash = session.sql("SELECT LAST_HASH AS H FROM GUPPIWHEEL.PUBLIC.CHAIN_HEAD WHERE CHAIN_ID = 'main'").collect()[0]["H"]
         bundle = {"id": new_id, "type": t, "title": p_title, "owner": owner,
                   "parent_id": norm_parent_val, "content": content, "metadata": meta}
@@ -1449,7 +1537,7 @@ def run(session, p_audit_id, p_title, p_finding, p_proposed_fix, p_target_ref):
     parent = p_audit_id if (isinstance(p_audit_id, str) and p_audit_id.strip()) else None
     content = json.dumps({"finding": p_finding, "proposed_fix": p_proposed_fix, "target_ref": tref, "proposed_by": "Stewart"})
     meta = json.dumps({"agent": "Stewart", "proposal": True, "status": "proposed", "authority": "sub-agent propose-only per RULE-027"})
-    r = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('STORY', ?, 'STEWART', ?, ?, 'Initiate', '[\"guppi\"]', NULL, ?)",
+    r = session.sql("CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT('STORY', ?, 'guppi', ?, ?, 'Initiate', '[\"guppi\",\"stewart\"]', NULL, ?)",
         params=[p_title, content, parent, meta]).collect()
     out = r[0][0] if r else None
     return {"proposed_story": out, "parent_audit": parent, "note": "Proposal only. Human/orchestrator reviews + applies. Stewart cannot change doctrine (RULE-027)."}
@@ -2165,64 +2253,21 @@ LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
 PACKAGES = ('snowflake-snowpark-python')
 HANDLER = 'run'
-COMMENT = 'Forward-only repair of a desynced ID_CONVENTIONS counter. Recomputes NEXT_SEQ from the max sequential ID actually present and refuses to move the counter backward (the Aug-14 failure mode). Requires a reason; logs to VIOLATIONS under RULE-029. ADMIN-gated by grant.'
+COMMENT = 'DEPRECATED 3.32.0: no-op. IDs are derived from data (MAX+1 via ID_SERIES_V under the CHAIN_HEAD lock); there is no counter to resync.'
 EXECUTE AS OWNER
 AS
 $$
 def run(session, p_entity, p_reason):
-    ent = (p_entity or "").strip().upper()
-    if not ent:
-        return {"error": "P_ENTITY required"}
-    if not (p_reason or "").strip():
-        return {"error": "P_REASON required (audit trail)"}
-
-    reg = session.sql(
-        "SELECT ID_PREFIX, NEXT_SEQ FROM GUPPIWHEEL.PUBLIC.ID_CONVENTIONS WHERE ENTITY = ?",
-        params=[ent]
-    ).collect()
-    if not reg:
-        return {"error": "unknown entity (not in ID_CONVENTIONS)", "entity": ent}
-    prefix = reg[0]["ID_PREFIX"]
-    cur = reg[0]["NEXT_SEQ"]
-    if prefix is None:
-        return {"error": "entity has no ID_PREFIX (human-readable series)", "entity": ent}
-
-    # ONLY the gap-free sequential series counts: strictly PREFIX + digits (e.g. NAR-96).
-    # Must NOT match slug/date-suffixed IDs (NAR-RADAR-20260702, NAR-CHANGELOG-3.5.0)
-    # or suffix-tagged IDs (RES-111-ROCKY). NOTE: REGEXP_LIKE is a FULL-STRING match in
-    # Snowflake -- an earlier version used REGEXP_SUBSTR(ID,'[0-9]+$'), which matched the
-    # date-suffixed IDs and set the counter to 20260703.
-    mx = session.sql(
-        "SELECT COALESCE(MAX(TO_NUMBER(SUBSTR(ID, LENGTH(?)+1))),0) AS M "
-        "FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
-        "WHERE ID LIKE ? AND REGEXP_LIKE(SUBSTR(ID, LENGTH(?)+1), '[0-9]+')",
-        params=[prefix, prefix + '%', prefix]
-    ).collect()[0]["M"]
-
-    target = int(mx) + 1
-
-    # Forward-only: refuse the Aug-14 failure mode (hardcoded backward SET).
-    if cur is not None and target <= int(cur):
-        return {"entity": ent, "prefix": prefix, "next_seq": int(cur),
-                "actual_max": int(mx), "changed": False,
-                "note": "already at or ahead of data; refusing to move counter backward"}
-
-    session.sql(
-        "UPDATE GUPPIWHEEL.PUBLIC.ID_CONVENTIONS SET NEXT_SEQ = ? WHERE ENTITY = ?",
-        params=[target, ent]
-    ).collect()
-
-    session.sql(
-        "INSERT INTO GUPPIWHEEL.PUBLIC.VIOLATIONS (RULE_ID, ARTIFACT_ID, STATUS, OVERRIDE_REASON) "
-        "SELECT 'RULE-029', ?, 'acknowledged', ?",
-        params=['ID_SERIES:' + ent,
-                'RESYNC_ID_SERIES ' + str(cur) + ' -> ' + str(target) + ' (max=' + str(mx) + '). ' + p_reason]
-    ).collect()
-
-    return {"entity": ent, "prefix": prefix, "from_next_seq": (int(cur) if cur is not None else None),
-            "to_next_seq": target, "actual_max": int(mx), "changed": True, "reason": p_reason}
+    # 3.32.0: kept so existing callers do not break. Counters no longer exist, so there is nothing
+    # to repair; point the caller at the derived series instead.
+    return {"changed": False, "deprecated": True, "entity": p_entity,
+            "note": "IDs are derived in 3.32.0 (MAX+1 via ID_SERIES_V under the CHAIN_HEAD lock). Nothing to resync.",
+            "see": "SELECT * FROM GUPPIWHEEL.PUBLIC.ID_SERIES_V  /  SELECT GUPPIWHEEL.PUBLIC.PREVIEW_NEXT_ID(<type>, <product>)"}
 $$;
 GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(VARCHAR, VARCHAR) TO ROLE GUPPIWHEEL_ADMIN;
+-- Admin-only: undo the schema FUTURE GRANT to RSI roles (re-fires on every CREATE OR REPLACE; PLAT-D9).
+REVOKE USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(VARCHAR, VARCHAR) FROM ROLE RSI_APP_READER;
+REVOKE USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.RESYNC_ID_SERIES(VARCHAR, VARCHAR) FROM ROLE RSI_ENGINE;
 
 -- RETAG_PRODUCT — governed change of ARTIFACTS.PRODUCT_ID.
 -- Closes the last gap that forced raw DML: UPDATE_OWN_ARTIFACT covers only TITLE/CONTENT/TAGS, so
@@ -2655,3 +2700,4 @@ CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.28.0', 'ADD REPARENT_ARTIFACT(P
 CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.29.0', 'FIX chronic duplicate-initiative bug (RULE-031 hard block). SUBMIT_INITIATIVE''s dedup gate only compared TITLE+HYPOTHESIS via AI_SIMILARITY, missing explicit textual references to a live INIT-N/RES-N sitting in the submitter''s own INSTRUCTIONS/HYPOTHESIS (root incident: INIT-145 explicitly said "under initiative INIT-119" but scored only 0.469 similarity, well under the 0.80 threshold). Added a new EXPLICIT-REFERENCE HARD BLOCK to SUBMIT_INITIATIVE: regex-scans HYPOTHESIS+INSTRUCTIONS for INIT-\d+/RES-[\w-]+/E-\d+ patterns, resolves matches to their owning live INITIATIVE via PARENT_ID chain walk, and returns BLOCKED with NO P_FORCE override if found (unlike the existing overridable similarity HOLD — an explicit self-reference has no legitimate override case). Extended the same check to ROCKY_EXECUTE as a defense-in-depth safety net (flags rather than auto-researches if a queued initiative bypasses SUBMIT_INITIATIVE and self-references another live INIT). Reinforced GUPPIWHEEL_COWORK_AGENT orchestration instructions with an explicit pre-flight checkpoint. Updated RULE-031 to document both gates distinctly. Reconciled INIT-145 into INIT-119 via MERGE_ARTIFACTS. See PLAT-42/43.', FALSE);
 
 CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.31.0', 'Operational layer (PLAT-60): WHEEL(verb,args) front door + WHEEL_ADMIN, server-side WHEEL_CONTEXT + CLIENT_CAPABILITIES, evidence-based WHEEL_RECONCILE -> CAPTURE_DEBT + OPS_DIGEST_V (seeds 09/10), de-noised DIRECT_DML_TRIPWIRE_V, skills consolidated on wheel. Includes 3.30.0 (customer-name guard, loop kernel + Demo Forge).', FALSE);
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.32.0', 'IDs derived from data (PLAT-61): ID_SERIES_V + MAX+1 inside the CHAIN_HEAD lock; prefixes in TYPE_REGISTRY.ID_PREFIX + PRODUCTS.ID_PREFIX; ID_CONVENTIONS counters retired; CREATE_PRODUCT stems + SET_PRODUCT_PREFIX + PREVIEW_NEXT_ID; loud errors for unregistered products.', FALSE);

@@ -174,6 +174,8 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.PRODUCTS (
     STATUS          VARCHAR(20)     DEFAULT 'active',
     CREATED_AT      TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
 );
+-- 3.32.0: product-scoped ID stem (STORY -> <stem>-N, DEFECT -> <stem>-DN). Unique; set by CREATE_PRODUCT.
+ALTER TABLE GUPPIWHEEL.PUBLIC.PRODUCTS ADD COLUMN IF NOT EXISTS ID_PREFIX VARCHAR(30);
 
 -- =============================================================================
 -- ARTIFACT_LAUNCHES — audit log of artifact opens
@@ -367,35 +369,38 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.TYPE_REGISTRY (
 ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS IS_APP BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS ID_SERIES_ENTITY VARCHAR(40);
 ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS ID_PRODUCT_SCOPED BOOLEAN NOT NULL DEFAULT FALSE;
+-- 3.32.0: IDs are derived (MAX+1 in CREATE_ARTIFACT). ID_PREFIX = real allocation prefix for global types
+-- (NULL = explicit ID required); product-scoped types use PRODUCTS.ID_PREFIX || '-' || PRODUCT_ID_SUFFIX.
+ALTER TABLE GUPPIWHEEL.PUBLIC.TYPE_REGISTRY ADD COLUMN IF NOT EXISTS PRODUCT_ID_SUFFIX VARCHAR(10);
 
 MERGE INTO GUPPIWHEEL.PUBLIC.TYPE_REGISTRY t
 USING (
   SELECT column1 AS TYPE, column2 AS PURPOSE, column3 AS ID_PREFIX, column4 AS LIFECYCLE,
          column5 AS STAGES, column6 AS IS_LAUNCHABLE, column7 AS INTRODUCED_IN, column8 AS NOTES,
-         column9 AS IS_APP, column10 AS ID_SERIES_ENTITY, column11 AS ID_PRODUCT_SCOPED
+         column9 AS IS_APP, column10 AS ID_SERIES_ENTITY, column11 AS ID_PRODUCT_SCOPED, column12 AS PRODUCT_ID_SUFFIX
   FROM VALUES
-    ('INITIATIVE','A unit of intended value: a hypothesis to pursue. Root of a work tree; Rocky researches it and epics/stories hang under it.','INIT-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('EPIC','A large body of work grouping related stories under an initiative.','E-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('RESEARCH','Synthesis/findings (often produced by Rocky) that ground an initiative before building.','RES-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.','product-scoped: ENTITY=STORY_<PRODUCT> (PLAT-, F6-, S-, ...)','workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Published',FALSE,'','',FALSE,NULL,TRUE),
-    ('NARRATIVE','A published, launchable write-up (plan, story, briefing) rendered to HTML in the wheel.','NAR-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',FALSE,NULL,FALSE),
-    ('APP','A launchable application registered in the wheel (identifier/url/stage_path in metadata.launch).','APP-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
-    ('MODEL','A launchable ML model registered in the wheel.','APP- (minted in the APP series)','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
-    ('DASHBOARD','A launchable dashboard/visualization registered in the wheel.','DASH-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE),
-    ('DEFECT','A tracked defect/bug against product work. Product-scoped IDs.','product-scoped: ENTITY=DEFECT_<PRODUCT> (PLAT-D, F6-D, SC-D)','workitem','Research,Building,Built,Published,Resolved',FALSE,'','',FALSE,NULL,TRUE),
-    ('INCIDENT','An operational incident record.','INC-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('AUDIT','A read-only grounding/hygiene scan record (e.g., Stewart). System-generated; UUID IDs.','(UUID)','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('OPS_EVENT','An operational event / status marker (e.g., a product status snapshot).','OPS-<slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('OUTCOME','A measurable target tracked against the real world. A pointer (snowflake_path / app_metric / external_url) must resolve to live data or an explicit human sign-off before RESOLVED.','OUT-','outcome','ASPIRATIONAL,SELECTED,TRACKED,RESOLVED',FALSE,'INIT-37','Distinct 4-stage lifecycle (STG-005); the standard Initiate->Published stages do NOT apply.',FALSE,NULL,FALSE),
-    ('SKILL','A registered capability/recipe skill in the plugin.','<freeform slug>','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE),
-    ('WIDGET','A reusable building block (proc/UDF/SQL/python/HTML pattern/notebook/flow/semantic view) governed as an artifact but POINTING to where the implementation lives (content.pointer.ref). Composable by builder-Bob and the plugin. Default implementations home = GUPPI_LIB.LIB.','W-','standard','Draft,Published,Deprecated',FALSE,'GUPPI-widget','Global W- series. Catalog metadata here; implementation lives at content.pointer.ref (GUPPI_LIB.LIB.<obj> or @GUPPI_LIB.LIB.WIDGET_FILES/<path> or file/repo/url). PRODUCT_ID tags domain.',FALSE,'WIDGET',FALSE)
+    ('INITIATIVE','A unit of intended value: a hypothesis to pursue. Root of a work tree; Rocky researches it and epics/stories hang under it.','INIT-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE,NULL),
+    ('EPIC','A large body of work grouping related stories under an initiative.','E-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE,NULL),
+    ('RESEARCH','Synthesis/findings (often produced by Rocky) that ground an initiative before building.','RES-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE,NULL),
+    ('STORY','A concrete unit of work (feature/change) under an initiative or epic. Product-scoped IDs.',NULL,'workitem','Initiate,Research,Building,Built,SELECTED,RESOLVED,Published',FALSE,'','Product-scoped: <PRODUCTS.ID_PREFIX>-N (PLAT-, CHEMLENS-, F6-, ...). Product must be registered with an ID_PREFIX (CREATE_PRODUCT).',FALSE,NULL,TRUE,''),
+    ('NARRATIVE','A published, launchable write-up (plan, story, briefing) rendered to HTML in the wheel.','NAR-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',FALSE,NULL,FALSE,NULL),
+    ('APP','A launchable application registered in the wheel (identifier/url/stage_path in metadata.launch).','APP-','standard','Initiate,Research,Building,Built,Published',TRUE,'','',TRUE,'APP',FALSE,NULL),
+    ('MODEL','A launchable ML model registered in the wheel.','APP-','standard','Initiate,Research,Building,Built,Published',TRUE,'','Minted in the APP- series.',TRUE,'APP',FALSE,NULL),
+    ('DASHBOARD','A launchable dashboard/visualization registered in the wheel.','APP-','standard','Initiate,Research,Building,Built,Published',TRUE,'','Minted in the APP- series (legacy DASH-* ids remain valid).',TRUE,'APP',FALSE,NULL),
+    ('DEFECT','A tracked defect/bug against product work. Product-scoped IDs.',NULL,'workitem','Research,Building,Built,Published,Resolved',FALSE,'','Product-scoped: <PRODUCTS.ID_PREFIX>-DN (PLAT-D, F6-D, SC-D, GUPPI-D).',FALSE,NULL,TRUE,'D'),
+    ('INCIDENT','An operational incident record.','INC-','standard','Initiate,Research,Building,Built,Published',FALSE,'','',FALSE,NULL,FALSE,NULL),
+    ('AUDIT','A read-only grounding/hygiene scan record (e.g., Stewart, TARS).','AUDIT-','standard','Initiate,Research,Building,Built,Published',FALSE,'','Global AUDIT-N series.',FALSE,NULL,FALSE,NULL),
+    ('OPS_EVENT','An operational event / status marker (e.g., a product status snapshot).',NULL,'standard','Initiate,Research,Building,Built,Published',FALSE,'','Descriptive slug ID (OPS-<slug>); pass P_EXPLICIT_ID.',FALSE,NULL,FALSE,NULL),
+    ('OUTCOME','A measurable target tracked against the real world. A pointer (snowflake_path / app_metric / external_url) must resolve to live data or an explicit human sign-off before RESOLVED.','OUT-','outcome','ASPIRATIONAL,SELECTED,TRACKED,RESOLVED',FALSE,'INIT-37','Distinct 4-stage lifecycle (STG-005); the standard Initiate->Published stages do NOT apply.',FALSE,NULL,FALSE,NULL),
+    ('SKILL','A registered capability/recipe skill in the plugin.',NULL,'standard','Initiate,Research,Building,Built,Published',FALSE,'','Freeform slug ID; pass P_EXPLICIT_ID.',FALSE,NULL,FALSE,NULL),
+    ('WIDGET','A reusable building block (proc/UDF/SQL/python/HTML pattern/notebook/flow/semantic view) governed as an artifact but POINTING to where the implementation lives (content.pointer.ref). Composable by builder-Bob and the plugin. Default implementations home = GUPPI_LIB.LIB.','W-','standard','Draft,Published,Deprecated',FALSE,'GUPPI-widget','Global W- series. Catalog metadata here; implementation lives at content.pointer.ref (GUPPI_LIB.LIB.<obj> or @GUPPI_LIB.LIB.WIDGET_FILES/<path> or file/repo/url). PRODUCT_ID tags domain.',FALSE,'WIDGET',FALSE,NULL)
 ) s
 ON t.TYPE = s.TYPE
 WHEN MATCHED THEN UPDATE SET PURPOSE=s.PURPOSE, ID_PREFIX=s.ID_PREFIX, LIFECYCLE=s.LIFECYCLE,
   STAGES=s.STAGES, IS_LAUNCHABLE=s.IS_LAUNCHABLE, INTRODUCED_IN=s.INTRODUCED_IN, NOTES=s.NOTES,
-  IS_APP=s.IS_APP, ID_SERIES_ENTITY=s.ID_SERIES_ENTITY, ID_PRODUCT_SCOPED=s.ID_PRODUCT_SCOPED, UPDATED_AT=CURRENT_TIMESTAMP()
-WHEN NOT MATCHED THEN INSERT (TYPE,PURPOSE,ID_PREFIX,LIFECYCLE,STAGES,IS_LAUNCHABLE,INTRODUCED_IN,NOTES,IS_APP,ID_SERIES_ENTITY,ID_PRODUCT_SCOPED)
-  VALUES (s.TYPE,s.PURPOSE,s.ID_PREFIX,s.LIFECYCLE,s.STAGES,s.IS_LAUNCHABLE,s.INTRODUCED_IN,s.NOTES,s.IS_APP,s.ID_SERIES_ENTITY,s.ID_PRODUCT_SCOPED);
+  IS_APP=s.IS_APP, ID_SERIES_ENTITY=s.ID_SERIES_ENTITY, ID_PRODUCT_SCOPED=s.ID_PRODUCT_SCOPED, PRODUCT_ID_SUFFIX=s.PRODUCT_ID_SUFFIX, UPDATED_AT=CURRENT_TIMESTAMP()
+WHEN NOT MATCHED THEN INSERT (TYPE,PURPOSE,ID_PREFIX,LIFECYCLE,STAGES,IS_LAUNCHABLE,INTRODUCED_IN,NOTES,IS_APP,ID_SERIES_ENTITY,ID_PRODUCT_SCOPED,PRODUCT_ID_SUFFIX)
+  VALUES (s.TYPE,s.PURPOSE,s.ID_PREFIX,s.LIFECYCLE,s.STAGES,s.IS_LAUNCHABLE,s.INTRODUCED_IN,s.NOTES,s.IS_APP,s.ID_SERIES_ENTITY,s.ID_PRODUCT_SCOPED,s.PRODUCT_ID_SUFFIX);
 
 -- =============================================================================
 -- NARRATIVE_TEMPLATE — the canonical narrative CONTENT structure as governance-as-data

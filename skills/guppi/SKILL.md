@@ -47,8 +47,8 @@ result with `open_browser`.
 |---|---|---|
 | INITIATIVE | `INIT-N` | Hypothesis-level work; Rocky researches new ones |
 | EPIC | `E-N` | A large story that decomposes into stories (not a product, team, or release) |
-| STORY | `<PRODUCT_PREFIX>-N` (e.g. `PLAT-60`, `CHEMLENS-22`) | Product-scoped series from `ID_CONVENTIONS` |
-| DEFECT | product-scoped | A code bug is a DEFECT, not an incident |
+| STORY | `<PRODUCT_PREFIX>-N` (e.g. `PLAT-60`, `CHEMLENS-22`) | Stem from `PRODUCTS.ID_PREFIX`; number derived |
+| DEFECT | `<PRODUCT_PREFIX>-DN` (e.g. `PLAT-D9`) | A code bug is a DEFECT, not an incident |
 | INCIDENT | `INC-N` | An operational event with its own lifecycle; may produce a DEFECT |
 | NARRATIVE / APP | `NAR-N` / `APP-N` | Rendered deliverables (template-stamped vs bespoke) |
 | AUDIT | `AUDIT-N` | TARS trust audits (see `tars-trust-auditor`) |

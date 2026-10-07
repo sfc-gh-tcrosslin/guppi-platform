@@ -158,7 +158,7 @@ its AUDIT to whatever tracker is configured. Never write tracker tables directly
 - Batch corrections — write them IMMEDIATELY when they happen
 - Skip preflight at session end because "we'll do it next time"
 - Mint a new initiative without `WHEEL('open')` first (it finds the existing home)
-- Hand-edit `ID_CONVENTIONS` or write `GUPPIWHEEL.PUBLIC.*` tables directly
+- Write `GUPPIWHEEL.PUBLIC.*` tables directly, or pass an explicit ID for a numbered type (IDs are derived)
 - Read a plugin copy other than `~/.snowflake/cortex/plugins/guppi-platform` (stale copies exist)
 - Assume a hook will remind you — in Desktop it will not
 
