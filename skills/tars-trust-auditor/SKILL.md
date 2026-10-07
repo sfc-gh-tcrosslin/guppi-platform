@@ -278,16 +278,20 @@ Never direct-INSERT into ARTIFACTS — `CREATE_ARTIFACT` is the only write path 
 
 **4. Present the report and wait for the human vote.**
 
-**5. Record the human vote** by updating the artifact's CONTENT in place:
+**5. Record the human vote** through the governed self-edit path (RULE-028/029 — never raw `UPDATE ARTIFACTS`;
+contributors have no DML and the tripwire flags owner-role edits). Read the current CONTENT, then:
 ```sql
-UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS
-SET CONTENT = OBJECT_INSERT(OBJECT_INSERT(OBJECT_INSERT(
-      CONTENT, 'human_vote', '<vote>', TRUE),
-      'human_conditions', '<conditions>', TRUE),
-      'status', 'COMPLETE', TRUE),
-    UPDATED_AT = CURRENT_TIMESTAMP()
-WHERE ID = '<audit_artifact_id>';
+CALL GUPPIWHEEL.PUBLIC.UPDATE_OWN_ARTIFACT(
+  '<audit_artifact_id>',
+  NULL,                                                  -- keep title
+  (SELECT OBJECT_INSERT(OBJECT_INSERT(OBJECT_INSERT(
+            CONTENT, 'human_vote', '<vote>', TRUE),
+            'human_conditions', '<conditions>', TRUE),
+            'status', 'COMPLETE', TRUE)
+     FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE ID = '<audit_artifact_id>'),
+  NULL);                                                 -- keep tags
 ```
+`UPDATE_OWN_ARTIFACT` is owner-gated: the auditor who created the AUDIT records the vote.
 
 ### Audit Target Profiles
 

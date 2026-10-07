@@ -2,6 +2,63 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.31.0] — 2026-10-06
+
+### Changed — operational layer: one front door, server-side, client-aware (PLAT-60)
+
+**Why.** A two-day product build recorded nothing in the wheel. Measured in CoCo Desktop: plugin hooks
+*do* run, but from the workspace cwd (so the relative `bash hooks/lifecycle.sh` never resolved), matchers
+are case-sensitive, and hook `systemMessage` output never reaches the agent (only `block` is enforced,
+with its reason hidden). Session state lived in a local JSON only hooks wrote. Skills still taught writes
+to the retired `GUPPI` database, including hand-incrementing `ID_CONVENTIONS.NEXT_SEQ`.
+
+- **`WHEEL(verb, args)` — the single operational front door** (`seeds/engine/09_wheel_front_door.sql`).
+  Verbs `context`, `open`, `story`, `ship`, `capture`, `plan`, `reparent`, `help`. A thin
+  `EXECUTE AS OWNER` router over the existing governed procs; adds no write path (RULE-029).
+  - `open` **reuses** the best existing initiative/epic for a product (title similarity + product +
+    product-children), mints new only with `force` + reason.
+  - `story`/`open` auto-call `RESYNC_ID_SERIES` once on an allocation collision (forward-only, logged).
+  - `ship` advances via `ADVANCE_STAGE` (NULL override — never smuggle a note into the override arg),
+    records the note in `CONTENT.shipped[]`, clears the product's capture debt.
+  - `capture` inherits the parent's product (`PUBLISH_ARTIFACT` has no product arg; captures were born
+    untagged). NULL-safe binds (Snowpark sends Python `None` as `'None'`).
+- **`WHEEL_ADMIN(merge|resync|retag)`** — admin repairs, granted to `GUPPIWHEEL_ADMIN` only (wrapping
+  them in owner-rights `WHEEL` would hand admin power to contributors).
+- **`WHEEL_CONTEXT`** — per-user current initiative/story/product/client, server-side. Replaces
+  `~/.snowflake/cortex/.guppi-platform-state.json` as the source of truth (now a cache at most).
+- **`CLIENT_CAPABILITIES`** — measured per-client hook/memory behaviour (Desktop row from the 2026-10-06
+  probe; CLI row partially measured). `context` returns it plus guidance.
+- **Evidence-based capture** (`seeds/engine/10_reconcile.sql`): `PRODUCT_FOOTPRINT`, `WORK_EVIDENCE_V`
+  (DEPLOY = `ALTER WORKSPACE ... ADD LIVE VERSION`, AGENT_RELEASE, SCHEMA from `QUERY_HISTORY`),
+  `WHEEL_RECONCILE` + hourly `WHEEL_RECONCILE_TASK` -> `CAPTURE_DEBT`, `CAPTURE_DEBT_V`, `OPS_DIGEST_V`
+  (debt, tripwire, stale Building stories, ID-registry conflicts, unregistered products). Replay over
+  2026-10-04..06 found 15 deploys + 11 agent releases + 34 schema changes with no wheel record.
+
+### Fixed
+
+- **`DIRECT_DML_TRIPWIRE_V` false positives.** LANGUAGE SQL procs bind `:P_*` (not `?`), and the view
+  matched any DML that *mentioned* a protected table. 27 of 38 hits over 14 days were proc-internal,
+  burying real raw writes (a RULES edit, a DELETE of an initiative). Now excludes `:P_*`/proc-local
+  binds and judges the DML **target**. `COPY GRANTS` added (CREATE OR REPLACE dropped 8 SELECT grants).
+- **Hooks.** Plugin hook commands use an absolute path. `pre-write` no longer blocks on the local cache
+  (in Desktop the block reason is invisible and the cache is never written); it records capture debt.
+- **Skills taught the retired `GUPPI` DB.** `wheel` rewritten as the only operational skill; `guppi`
+  reduced to viewer + concepts (and given the front-matter it lacked); `build-protocol` wired to `WHEEL`
+  with an honest hook note; `guppi-dist` retired (dead bundle, half its files missing); legacy
+  `guppi/*/README.md` marked. Removed the instruction to hand-increment `NEXT_SEQ` (the Aug-14
+  duplicate-ID failure mode). `tars-trust-auditor` human vote and `guppiwheel-bootstrap` event now go
+  through `UPDATE_OWN_ARTIFACT` / `CREATE_ARTIFACT` instead of raw `UPDATE`/`INSERT`.
+- **Version drift.** 3.30.0 was in `plugin.json` only; 03_procs stamp, README and live `PLUGIN_VERSION`
+  were at 3.29.0. All four mirrors now 3.31.0.
+
+### Data repairs (via governed procs, 2026-10-06)
+
+- `MERGE_ARTIFACTS('INIT-153','INIT-70')` — duplicate initiative minted during this work.
+- `CREATE_PRODUCT('chemlens')` + `RETAG_PRODUCT` x26 — CHEMLENS-1..24, E-50, INIT-152 had NULL
+  `PRODUCT_ID` because `chemlens` was unregistered (CREATE_ARTIFACT used it only to pick the ID series).
+- `RESYNC_ID_SERIES('STORY_NGC')`. Filed `PLATFORM-1` for the ID-registry conflicts (duplicate `AUDIT`
+  rows, `GUPPI-` prefix shared by 3 entities, `platform` vs `DEFECT_PLAT` key) — needs an admin decision.
+
 ## [3.30.0] — 2026-09-30
 
 ### Changed — customer-name guard: one list, one script, can't-forget install

@@ -80,6 +80,11 @@ SELECT ID, TYPE, STAGE, TITLE, PARENT_ID FROM lineage ORDER BY CREATED_AT;
 
 ## Creating Artifacts — proc-mediated (RULE-029). NEVER raw-INSERT.
 
+> **For day-to-day work use the `wheel` skill:** `CALL GUPPIWHEEL.PUBLIC.WHEEL(verb, args)` with
+> `context`, `open` (reuses an existing home), `story`, `ship`, `capture`, `plan`. It wraps the procs
+> below with the right defaults (product inheritance, NULL-safe binds, collision auto-resync). The
+> decision tree here is the reference for what `WHEEL` calls underneath.
+
 Writes go through governed `EXECUTE AS OWNER` procs. Do **not** `INSERT INTO ARTIFACTS` directly
 and do **not** hand-assign IDs — the registry allocates them.
 

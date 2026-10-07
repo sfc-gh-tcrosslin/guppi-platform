@@ -691,7 +691,7 @@ SELECT 'narrative-template-adoption', 'Render contract (new narratives must decl
 -- Owner-rights view so contributors can read it without their own ACCOUNT_USAGE grants; the view
 -- OWNER needs access to SNOWFLAKE.ACCOUNT_USAGE (ACCOUNTADMIN does by default).
 -- LIMITATION: ACCOUNT_USAGE latency is 45min-3h, so this is forensics, not enforcement.
-CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.DIRECT_DML_TRIPWIRE_V
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.DIRECT_DML_TRIPWIRE_V COPY GRANTS
 COMMENT = 'RULE-028/029 detective control. Flags UNGOVERNED direct DML on protected substrate tables. Discriminator: client-issued statements carry a QUERY_TAG (cortex_code_desktop, query_source=agent_tool); statements inside governed stored procedures carry NO tag. Tagged = someone typed it (flag). Untagged + parameterized = proc-internal (ignored). Untagged + literal surfaces as REVIEW for non-CoCo clients. Owner-rights view so contributors read it without ACCOUNT_USAGE grants. LIMITATION: ACCOUNT_USAGE latency 45min-3h; prevention is running as GUPPIWHEEL_CONTRIBUTOR.'
 AS
 WITH base AS (
@@ -726,8 +726,13 @@ SELECT
   QUERY_ID,
   LEFT(QUERY_TEXT, 400) AS query_text
 FROM base
-WHERE tag:query_source::string = 'agent_tool'
-   OR (tag IS NULL AND QUERY_TEXT NOT LIKE '%?%');
+WHERE (tag:query_source::string = 'agent_tool'
+   OR (tag IS NULL AND QUERY_TEXT NOT LIKE '%?%'))
+  -- v3.31.0 de-noise: LANGUAGE SQL procs bind with :P_* / proc locals instead of '?'.
+  -- They were 27 of 38 hits over 14 days and buried 11 real raw writes (incl. a RULES edit).
+  AND NOT REGEXP_LIKE(QUERY_TEXT, '.*:(P_[A-Z0-9_]+|new_parent|dup_|surv_|child_count)\\b.*', 's')
+  -- v3.31.0: judge the DML TARGET, not any mention (UPDATE CAPTURE_DEBT ... EXISTS(SELECT .. ARTIFACTS) is not an ARTIFACTS write).
+  AND REGEXP_LIKE(QUERY_TEXT, '^\\s*(UPDATE|DELETE\\s+FROM|INSERT\\s+(OVERWRITE\\s+)?INTO|MERGE\\s+INTO|TRUNCATE(\\s+TABLE)?)\\s+GUPPIWHEEL\\.PUBLIC\\.(ARTIFACTS|RULES|ID_CONVENTIONS|TYPE_REGISTRY)\\b.*', 'is');
 
 -- =============================================================================
 -- RBAC (3-tier)

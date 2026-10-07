@@ -24,6 +24,8 @@ snowsql -f seeds/engine/03_procs.sql    # Creates the procedures (ADVANCE_STAGE 
 snowsql -f seeds/engine/04_semantic_view.sql
 snowsql -f seeds/engine/05_agents.sql
 snowsql -f seeds/engine/06_bond.sql     # The Bond (THE_BOND db) — episodic memory; ships EMPTY, private by default (row access policy), search bound to your active warehouse
+snowsql -f seeds/engine/09_wheel_front_door.sql  # WHEEL(verb,args) front door + WHEEL_ADMIN, WHEEL_CONTEXT, CLIENT_CAPABILITIES, PRODUCT_FOOTPRINT, CAPTURE_DEBT
+snowsql -f seeds/engine/10_reconcile.sql         # WORK_EVIDENCE_V, WHEEL_RECONCILE (+ hourly task), CAPTURE_DEBT_V, OPS_DIGEST_V. Owner needs ACCOUNT_USAGE (ACCOUNTADMIN)
 
 # --- RSI engine (Level 9 · Recursion) — the platform capability that improves what the wheel builds.
 #     Separate database (GUPPI_RSI_ENGINE). Optional-but-core: the wheel runs without it; RSI amplifies it.
@@ -112,15 +114,21 @@ Use the `plugin-creator` skill to scaffold:
 After generation, verify:
 
 ```sql
--- Log bootstrap event
-INSERT INTO GUPPIWHEEL.PUBLIC.ARTIFACTS (ID, TYPE, STAGE, TITLE, TAGS, OWNER, METADATA)
-SELECT
-  CONCAT(LOWER(CURRENT_USER()), '-bootstrap-', TO_VARCHAR(CURRENT_DATE(), 'YYYYMMDD')),
-  'OPS_EVENT', 'Published',
-  CONCAT('Bootstrap: ', CURRENT_USER(), ' joined GuppiWheel'),
-  ARRAY_CONSTRUCT('bootstrap', 'onboarding', 'platform'),
-  CURRENT_USER(),
-  OBJECT_CONSTRUCT('event', 'bootstrap', 'role', CURRENT_ROLE(), 'timestamp', CURRENT_TIMESTAMP());
+-- Log bootstrap event through the single write chokepoint (RULE-029). Never raw-INSERT into ARTIFACTS:
+-- contributors have no DML on it, and an owner-role INSERT would bypass the gate (DIRECT_DML_TRIPWIRE_V).
+-- OPS_EVENT uses a descriptive slug id, so an explicit id is the convention (CREATE_ARTIFACT de-dupes it).
+CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(
+  'OPS_EVENT',
+  'Bootstrap: ' || CURRENT_USER() || ' joined GuppiWheel',
+  'guppi',
+  '{"event":"bootstrap"}',
+  NULL, 'Published',
+  '["bootstrap","onboarding","platform"]',
+  'OPS-' || LOWER(CURRENT_USER()) || '-bootstrap-' || TO_VARCHAR(CURRENT_DATE(), 'YYYYMMDD'),
+  NULL);
+
+-- Then confirm the front door works for you:
+CALL GUPPIWHEEL.PUBLIC.WHEEL('context', '{}');
 ```
 
 ## What the IP Gets After Bootstrap

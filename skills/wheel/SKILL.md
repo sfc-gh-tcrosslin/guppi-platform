@@ -1,227 +1,130 @@
 ---
 name: wheel
-description: "Wheel discipline gestures for guppi-platform: open initiatives, publish plans as narratives, link commits to initiatives. Use when user says: wheel start, wheel current, wheel status, wheel publish plan, wheel link commit, what am I working on, open an initiative, dogfood, RULE-013 reminder, headless first."
+description: "The ONE operational skill for GuppiWheel: what am I working on, open/reuse an initiative, create a story, ship a story after a deploy, capture a deliverable, publish a plan, fix the wheel. Everything goes through CALL GUPPIWHEEL.PUBLIC.WHEEL(verb, args). Use when user says: wheel, wheel context, what am I working on, open an initiative, start work, new story, ship it, I deployed, capture this, publish plan, record this in guppi, capture debt, tripwire, dogfood, RULE-013."
 ---
 
-# /wheel — Use Guppi to Build Guppi
+# /wheel — the operational front door
 
-Explicit gestures that wrap the dogfood loop. Hooks fire automatically; this skill is the human escape hatch when hooks miss or you want to be deliberate.
-
-## Triggers
-
-- `wheel start "<title>"` — open a new initiative
-- `wheel current` — show my active initiative
-- `wheel status` — list my open initiatives across all stages
-- `wheel capture <file>` — **push a finished deliverable into the wheel** (PUT + PUBLISH_ARTIFACT + provenance)
-- `wheel publish-plan <file>` — publish a `.plan.md` as a NARRATIVE under current initiative
-- `wheel link-commit <sha>` — append `Wheel: INIT-N` footer to a not-yet-pushed commit
-
-## Session-current state
-
-The active initiative for the current session lives at `~/.snowflake/cortex/.guppi-platform-state.json`.
-This is the **single canonical path** — both `hooks/lifecycle.sh` and this skill's commands read and
-write it. (Before 2026-08-16 the hook used `$CORTEX_PROJECT_DIR/.cortex-plugin/.state.json` while
-this skill used the path above: split brain. `CORTEX_PROJECT_DIR` is normally unset, so the hook
-resolved state against cwd, failed to write, and died under `set -e`. Nothing persisted and
-`current_initiative` was permanently null. Do not reintroduce a second location.)
-
-```json
-{
-  "phase": "ad-hoc",
-  "active_skill": null,
-  "refs_read": [],
-  "current_initiative": "INIT-29",
-  "pending_captures": [
-    {"path": "/Users/me/Downloads/deck.html", "sha256": "...", "ts": "2026-08-16T12:00:00Z"}
-  ],
-  "last_updated": "2026-08-16T12:00:00Z"
-}
-```
-
-`pending_captures[]` is capture debt: deliverables that exist as local files but not yet as
-artifacts. The `pre-write` hook appends to it; `/wheel capture` removes entries; the `stop` hook
-lists whatever remains.
-
-## Commands
-
-### wheel start "<title>"
-
-Asks for the hypothesis (one sentence) and instructions (what success looks like). Then:
+Every operational interaction with GuppiWheel is **one call**:
 
 ```sql
-CALL GUPPIWHEEL.PUBLIC.SUBMIT_INITIATIVE(
-  '<title>',
-  '<hypothesis>',
-  '<instructions>'
-);
--- Returns: 'Submitted: INIT-N (Initiate). Rocky picks up within 5 minutes.'
+CALL GUPPIWHEEL.PUBLIC.WHEEL('<verb>', '<json args>');
 ```
 
-Capture the returned `INIT-N` and write it to the state file:
+`WHEEL` routes to the governed procs (`CREATE_ARTIFACT`, `ADVANCE_STAGE`, `PUBLISH_ARTIFACT`,
+`CREATE_NARRATIVE`, `REPARENT_ARTIFACT`, `UPDATE_OWN_ARTIFACT`). It adds no write path of its own.
+Session state lives server-side in `WHEEL_CONTEXT`, so it is the same from CoCo Desktop, the CLI,
+agents and Slack. Run as `GUPPIWHEEL_CONTRIBUTOR`.
 
-```bash
-echo "{\"current_initiative\":\"INIT-N\",\"set_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > ~/.snowflake/cortex/.guppi-platform-state.json
+**Never** write `GUPPIWHEEL.PUBLIC.*` tables directly, never hand-edit `ID_CONVENTIONS`, never pass an
+explicit ID. If `WHEEL` cannot do it, it is an admin repair (`WHEEL_ADMIN`, below) or a gap to report.
+
+## Client awareness (do this first)
+
+| | CoCo Desktop | CoCo CLI |
+|---|---|---|
+| Detect | agent shell: `CORTEX_CODE_CLIENT_SURFACE=coco_desktop` | `CORTEX_TERMINAL_LAUNCHER_SOURCE=cli` |
+| Hooks run | yes | yes |
+| Hook reminders reach the agent | **no** (measured 2026-10-06) | not yet measured |
+| Hook blocks enforced | yes, but reason text hidden | not yet measured |
+
+Source of truth is the `CLIENT_CAPABILITIES` table, returned by `context`. In Desktop **no reminder will
+ever reach you**: record `ship`/`capture` in the same turn as the work, not "later".
+
+## The loop
+
+```
+context  ->  open  ->  story  ->  (build)  ->  ship  ->  capture / plan
 ```
 
-Confirm to user: `Opened INIT-N. All work this session links here.`
+| Verb | Args | What it does |
+|---|---|---|
+| `context` | `{"client":"coco_desktop"}` | Records the client; returns current initiative/story/product, client capabilities, open **capture debt**, last-24h **tripwire** hits, stale `Building` stories, and guidance. **First call of every session.** |
+| `open` | `{"title","product"}` or `{"parent":"INIT-N"}` | **Reuses** the best existing initiative/epic for the product and sets context to it. Mints new only with `"force":true,"reason":"..."`. Never mint because the title is new. |
+| `story` | `{"title","content"?, "stage"?, "product"?, "parent"?}` | Creates a STORY under the current context. ID allocated by `CREATE_ARTIFACT`; a lagging counter is auto-resynced once. Sets it as current story. |
+| `ship` | `{"note","id"?, "stage"?="Built"}` | Advances the story (`ADVANCE_STAGE`), appends the note to `CONTENT.shipped[]`, clears the product's open capture debt. **Call after every deploy / agent release / milestone, in the same turn.** |
+| `capture` | `{"stage_path","title","description"?, "kind"?="APP", "app_type"?, "parent"?}` | Registers a deliverable you already `PUT` (see below). Inherits the parent's product. |
+| `plan` | `{"title","sections":{"summary","context","phased_plan","risks","why_now"}}` | Publishes a plan as an `internal_plan` NARRATIVE under context. |
+| `reparent` | `{"id","parent","reason"}` | Moves an artifact you own (`REPARENT_ARTIFACT`). |
+| `help` | `{}` | Lists verbs. |
 
-### wheel current
-
-Read state file, query the initiative:
+Examples:
 
 ```sql
-SELECT ID, TITLE, STAGE, OWNER, CREATED_AT,
-       (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS c WHERE c.PARENT_ID = a.ID) AS children
-FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
-WHERE ID = :current_initiative;
+CALL GUPPIWHEEL.PUBLIC.WHEEL('context', '{"client":"coco_desktop"}');
+CALL GUPPIWHEEL.PUBLIC.WHEEL('open',    '{"title":"Proposed tab","product":"chemlens"}');   -- -> reuses E-50
+CALL GUPPIWHEEL.PUBLIC.WHEEL('story',   '{"title":"Browsable Proposed tab"}');
+CALL GUPPIWHEEL.PUBLIC.WHEEL('ship',    '{"note":"Proposed tab live in SnowBeaker (snow app deploy)"}');
 ```
 
-Show ID, title, stage, child count, days at stage. If no current, suggest `wheel start`.
+## Capture debt (why you will be caught)
 
-### wheel status
+`WHEEL_RECONCILE` runs hourly (`WHEEL_RECONCILE_TASK`). It reads `ACCOUNT_USAGE.QUERY_HISTORY` for build
+evidence in each product's `PRODUCT_FOOTPRINT`:
 
-List all my non-Published initiatives:
+- `DEPLOY` — `ALTER WORKSPACE ... ADD LIVE VERSION` (what `snow app deploy` issues)
+- `AGENT_RELEASE` — `ALTER AGENT ... DEFAULT_VERSION / COMMIT`
+- `SCHEMA` — `CREATE` table/view/semantic view/function/procedure
+
+Evidence with no later wheel touch for that product and user becomes a `CAPTURE_DEBT` row, surfaced by
+`context` and `OPS_DIGEST_V`. `ship` and `story` clear it. ACCOUNT_USAGE lags 45 min to 3 h, so this is
+a backstop, not a substitute for shipping in-turn. A new product needs a `PRODUCT_FOOTPRINT` row.
+
+## capture: putting a file in the wheel
+
+1. **Sandbox-lint HTML** first. Snowflake renders staged HTML in a strict sandbox. Reject if it has
+   remote or sibling `<script src>` / `<link href>`, inline handlers (`onclick=` ...), `eval(`,
+   `fetch(` or `XMLHttpRequest`. A file that fails renders locally but breaks when shared.
+2. **PUT the bytes** (no spaces in the staged filename):
+   ```sql
+   PUT 'file://<abs-path>' '@GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS/<PARENT>/<YYYYMMDD>/' AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
+   ```
+3. `WHEEL('capture', {"stage_path": "...", "title": "...", "kind": "APP"})`.
+4. **Render-parity check:** `CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH('<ID>', 60);`
+
+**NARRATIVE vs APP.** NARRATIVE = template-stamped sections rendered by `ENSURE_NARRATIVE_HTML`
+(use `plan`, or `CREATE_NARRATIVE` for other templates). APP = bespoke interactive output (hand-built
+deck, WebGL hero, Streamlit). Do not label a hand-built deck a NARRATIVE.
+
+## Admin repairs — `WHEEL_ADMIN` (GUPPIWHEEL_ADMIN only)
+
+| Verb | Args | Delegates to |
+|---|---|---|
+| `merge` | `{"duplicate","survivor","reason"}` | `MERGE_ARTIFACTS` (re-parents children, supersedes the duplicate) |
+| `resync` | `{"entity","reason"}` | `RESYNC_ID_SERIES` (forward-only counter repair) |
+| `retag` | `{"id","product","reason"}` | `RETAG_PRODUCT` |
+
+Kept out of `WHEEL` on purpose: `WHEEL` runs as owner, so wrapping admin procs there would hand admin
+power to every contributor.
+
+## Ops digest
 
 ```sql
-SELECT ID, TITLE, STAGE, 
-       DATEDIFF('day', UPDATED_AT, CURRENT_TIMESTAMP()) AS days_at_stage,
-       (SELECT COUNT(*) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS c WHERE c.PARENT_ID = a.ID) AS children
-FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
-WHERE TYPE = 'INITIATIVE' 
-  AND OWNER = CURRENT_USER()
-  AND STAGE != 'Published'
-ORDER BY UPDATED_AT DESC;
+SELECT * FROM GUPPIWHEEL.PUBLIC.OPS_DIGEST_V;
 ```
 
-Render as a table grouped by stage.
+One row per hygiene check: capture debt, tripwire (7d), stale `Building` stories, duplicate ID-registry
+entities, shared ID prefixes, products missing from `PRODUCTS`.
 
-### wheel publish-plan <file>
+## link-commit (git)
 
-Given a plan file path (default: most recent `.plan.md` in `~/.snowflake/cortex/plans/` or `playground/.../plans/`):
+For not-yet-pushed commits: append a `Wheel: INIT-N` footer
+(`git commit --amend -m "$(git log -1 --format=%B)\n\nWheel: INIT-N"`). Refuse for pushed commits;
+add a follow-up commit instead.
 
-1. Read state file to get current initiative
-2. PUT plan markdown to `@GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS/plans/<basename>`
-3. Call `PUBLISH_ARTIFACT` with TYPE=NARRATIVE, parent=current_initiative, app_type=static_html
-4. Confirm: `Published <basename> as NAR-N under INIT-X`
+## Hooks
 
-If no current initiative, error: `Open one first with /wheel start, or pass --parent INIT-N explicitly.`
-
-### wheel capture <file> [--title "..."] [--description "..."] [--template default] [--supersede ID]
-
-**The one verb for getting creative desktop work into the wheel.** Same sequence every time — no
-judgment calls, no improvisation. This is the antidote to the drift documented in RULE-013:
-iterate freely in scratch, then capture at the milestone.
-
-**Never** hand-write `INSERT`/`UPDATE` against `ARTIFACTS` or `ID_CONVENTIONS`, and **never** pass
-`P_EXPLICIT_ID`. The procedure allocates IDs (RULE-029). As of 2026-08-16 the desktop session runs
-as `GUPPIWHEEL_CONTRIBUTOR`, so direct DML is *denied* anyway — but the discipline is the point.
-
-Steps:
-
-1. **Resolve the initiative.** Read `current_initiative` from the state file. If absent, stop and
-   tell the user to run `/wheel start` (or accept `--parent INIT-N`).
-
-2. **Sandbox-lint any HTML** before staging. Snowflake renders staged HTML in a strict sandbox.
-   Reject and report if the file contains:
-   - remote or sibling `<script src=...>` / `<link href=...>` (CDN, `./three.min.js`, etc.)
-   - inline event handlers (`onclick=`, `onload=`, ...)
-   - `eval(` or runtime network calls (`fetch(`, `XMLHttpRequest`)
-
-   A file that fails the lint renders locally but **breaks when shared from the wheel**. Either
-   inline the dependency (self-contained) or capture it as an `APP` with the limitation stated.
-
-3. **PUT the bytes** (contributor holds WRITE on the stage):
-
-```sql
-PUT 'file://<abs-path>' '@GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS/<INIT-N>/<YYYYMMDD>/'
-    AUTO_COMPRESS=FALSE OVERWRITE=TRUE;
-```
-
-4. **Register through the chokepoint.** Pick `app_type` from the extension:
-   `.html -> static_html`, `.pdf -> pdf`, service -> `spcs_service`, Streamlit -> `streamlit`.
-
-```sql
-CALL GUPPIWHEEL.PUBLIC.PUBLISH_ARTIFACT(
-  'NARRATIVE',                      -- or APP; see class split below
-  '<title>',
-  '<description>',
-  '{"app_type":"static_html","stage_path":"@GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS/<INIT-N>/<YYYYMMDD>/<basename>"}',
-  '<INIT-N>', NULL, 'internal'
-);
-```
-
-`PUBLISH_ARTIFACT` validates the launch spec then delegates the INSERT to `CREATE_ARTIFACT`,
-preserving the single write path and satisfying RULE-018 / CMP-003.
-
-5. **Stamp provenance.** CoCo Desktop already attaches a `QUERY_TAG` carrying
-   `desktop_session_id`, `agent_session_id`, and `tool_use_id` to every statement it issues — so
-   session lineage is recoverable from `QUERY_HISTORY` without extra work. Record `source_path` and
-   the file `sha256` in artifact metadata so a re-capture can be recognized.
-
-6. **Supersede, do not duplicate.** If this deliverable was captured before (same `source_path`
-   under the same initiative), set `SUPERSEDED_BY` on the prior artifact via the governed path
-   rather than creating a sibling (RULE-025 keeps serving surfaces on current truth).
-
-7. **Render-parity check.** Confirm the shared bytes actually resolve — verify the artifact, not
-   just the local file:
-
-```sql
-CALL GUPPIWHEEL.PUBLIC.GET_ARTIFACT_LAUNCH('<ID>', 60);
-```
-
-8. **Clear the debt.** Remove the entry from `pending_captures[]` in the state file and confirm:
-   `Captured <basename> as <ID> under <INIT-N>`.
-
-#### NARRATIVE vs APP — which class?
-
-- **NARRATIVE** — the default. Content lives as template-stamped sections and the canonical
-  renderer (`ENSURE_NARRATIVE_HTML`) produces the HTML. Consistent order, headings, and styling
-  across everything we publish; sandbox-safe by construction. Always declare a `template`
-  (`default`, `account_brief`, `internal_plan`, `position`) so sections are validated and rendered
-  in `NARRATIVE_TEMPLATE.ORD` with registry `HEADING`s.
-- **APP** — bespoke interactive output (custom slide deck, WebGL hero, Streamlit). Hand-authored
-  HTML belongs here, registered with its own `app_type` and an explicit note about sandbox limits.
-  Do not mislabel a hand-built deck as a NARRATIVE: it will not match the canonical render.
-
-
-### wheel link-commit <sha>
-
-For not-yet-pushed commits only. Verify:
-
-```bash
-git log <sha> --not --remotes 2>/dev/null
-```
-
-If returns the sha, the commit hasn't been pushed. Run `git rebase -i` to amend the message with `Wheel: INIT-N` footer (interactive). Or for the most recent commit: `git commit --amend -m "$(git log -1 --format=%B)\n\nWheel: INIT-N"`.
-
-If commit was already pushed, refuse: `Cannot rewrite pushed history. Add a follow-up commit referencing the initiative instead.`
+`hooks/lifecycle.sh` is best-effort. In Desktop its reminders are invisible to the agent, and the
+plugin's relative hook command does not resolve from the workspace cwd. Do not rely on hooks for
+recording. The legacy local file `~/.snowflake/cortex/.guppi-platform-state.json` is a cache at most;
+`WHEEL_CONTEXT` is the source of truth.
 
 ## RULE references
-
-This skill exists because of:
 
 - RULE-013 Headless First — every output is an artifact
 - RULE-014 Status Ownership — submitter sets Initiate
 - RULE-018 Launchables Live in the Wheel — bytes belong in stage
 - RULE-025 Current truth only — re-capture supersedes, it does not duplicate
-- RULE-029 Single write chokepoint — `CREATE_ARTIFACT` allocates IDs; never pass an explicit ID
+- RULE-028/029 Procedure-mediated writes; `CREATE_ARTIFACT` is the single chokepoint
 - RULE-033 JSON bodies — long-form prose lives in `CONTENT.body_md`
 - RULE-034 Least privilege — the session runs as `GUPPIWHEEL_CONTRIBUTOR`
-
-Enforcement is layered, because any single layer drifts:
-
-| Layer | Control | Type |
-|---|---|---|
-| Identity | session runs as `GUPPIWHEEL_CONTRIBUTOR` (no DML on `ARTIFACTS`/`RULES`/`ID_CONVENTIONS`) | preventive |
-| Gate | `pre-write` blocks creating a new deliverable with no initiative; warns on edit | preventive |
-| Verb | `/wheel capture` — one deterministic path through the procs | procedural |
-| Render | `ENSURE_NARRATIVE_HTML` + `NARRATIVE_TEMPLATE` — one renderer, one design system | procedural |
-| Detective | `DIRECT_DML_TRIPWIRE_V` catches the owner/ACCOUNTADMIN bypass RBAC cannot bind | detective |
-| Maintenance | `RESYNC_ID_SERIES` (forward-only, admin) — removes any reason to hand-edit counters | procedural |
-
-
-Hooks (`hooks/lifecycle.sh post-create-plan`, `post-switch-mode`, `pre-push`) provide automatic enforcement. This skill provides explicit gestures.
-
-## Note on wheel-platform separation
-
-`wheel start` works for any account that has `GUPPIWHEEL.PUBLIC` installed. The skill doesn't care which plugin you're working in. Sister plugins can adopt the same loop by importing the wheel skill.

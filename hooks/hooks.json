@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/lifecycle.sh session-start",
+            "command": "bash \"$HOME/.snowflake/cortex/plugins/guppi-platform/hooks/lifecycle.sh\" session-start",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/lifecycle.sh pre-write",
+            "command": "bash \"$HOME/.snowflake/cortex/plugins/guppi-platform/hooks/lifecycle.sh\" pre-write",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/lifecycle.sh post-skill",
+            "command": "bash \"$HOME/.snowflake/cortex/plugins/guppi-platform/hooks/lifecycle.sh\" post-skill",
             "timeout": 5
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/lifecycle.sh post-create-plan",
+            "command": "bash \"$HOME/.snowflake/cortex/plugins/guppi-platform/hooks/lifecycle.sh\" post-create-plan",
             "timeout": 10
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/lifecycle.sh post-switch-mode",
+            "command": "bash \"$HOME/.snowflake/cortex/plugins/guppi-platform/hooks/lifecycle.sh\" post-switch-mode",
             "timeout": 5
           }
         ]
@@ -60,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash hooks/lifecycle.sh stop",
+            "command": "bash \"$HOME/.snowflake/cortex/plugins/guppi-platform/hooks/lifecycle.sh\" stop",
             "timeout": 5
           }
         ]

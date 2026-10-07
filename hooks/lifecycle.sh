@@ -145,29 +145,13 @@ case "$EVENT" in
     is_scratch "$TARGET" && allow
     is_deliverable "$TARGET" || allow
 
-    INIT=$(get_field '.current_initiative' '')
-
-    # create vs edit: a 'write' to a path that does not yet exist is a creation.
-    IS_CREATE=0
-    if [ ! -e "$TARGET" ]; then IS_CREATE=1; fi
-
-    if [ -z "$INIT" ] && [ "$IS_CREATE" = "1" ]; then
-      REASON="[guppi-platform] BLOCKED by RULE-013 (Headless First): creating a new deliverable ('$(basename "$TARGET")') with no open initiative. Every output is an artifact in GUPPIWHEEL.PUBLIC.ARTIFACTS before any external render. Fix: run '/wheel start \"<title>\"' to open an initiative, then retry. If this is throwaway, write it under a scratch path (playground/, /tmp/, or *.scratch.*) instead."
-      printf '{"decision": "block", "reason": "%s"}\n' "$(jesc "$REASON")"
-      exit 2
-    fi
-
+    # v3.31.0: no longer BLOCKS. Measured 2026-10-06 in CoCo Desktop: blocks are enforced but their
+    # reason text is hidden from the agent, and current_initiative now lives server-side in
+    # GUPPIWHEEL.PUBLIC.WHEEL_CONTEXT (this local file is a cache that nothing reliably writes).
+    # A block keyed on this file would stop legitimate work with an unexplained error. Enforcement
+    # moved server-side: WHEEL_RECONCILE turns unrecorded build work into CAPTURE_DEBT.
     record_pending "$TARGET"
-
-    if [ -z "$INIT" ]; then
-      MSG="[guppi-platform] RULE-013 warning: editing deliverable '$(basename "$TARGET")' with no open initiative. Recorded as capture debt. Open one with /wheel start, then /wheel capture before the session ends."
-      printf '{"decision": "allow", "systemMessage": "%s"}\n' "$(jesc "$MSG")"
-      exit 0
-    fi
-
-    MSG="[guppi-platform] Deliverable tracked under ${INIT}. Remember: /wheel capture $(basename "$TARGET") before session end."
-    printf '{"decision": "allow", "systemMessage": "%s"}\n' "$(jesc "$MSG")"
-    exit 0
+    allow
     ;;
 
   post-skill)

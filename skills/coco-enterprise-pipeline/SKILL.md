@@ -89,7 +89,7 @@ CREATE OR REPLACE VIEW DEV_HEALTHCARE.ANALYTICS.V_DASHBOARD AS ...;
 
 ### Step 2: Request Promotion
 
-Engineer creates a promotion request (GUPPI story or dedicated table):
+Engineer creates a promotion request. `PROMOTION_REQUESTS` is a table **you create** as part of this pattern (shown in a `GUPPI.PLATFORM` schema for illustration; put it in your own governance schema). Link it to the wheel story via `STORY_ID`:
 
 ```sql
 INSERT INTO GUPPI.PLATFORM.PROMOTION_REQUESTS
@@ -102,7 +102,7 @@ VALUES (UUID_STRING(), 'F6-042', 'DEV', 'QA', 'TABLE', 'DEV_HEALTHCARE.ANALYTICS
 A Snowflake Task monitors the promotion stream. On new request:
 
 1. TARS audits the artifact (schema validation, test coverage, security scan)
-2. Trust score recorded in GUPPI.PLATFORM.AUDIT_RUNS
+2. Trust score recorded as a TARS `AUDIT` artifact in `GUPPIWHEEL.PUBLIC.ARTIFACTS` (via `CREATE_ARTIFACT`)
 3. If score < threshold → request auto-rejected with feedback
 4. If score >= threshold → request advances to QA_REVIEW status
 
@@ -281,7 +281,7 @@ For genuine emergencies (production down, data corruption):
 1. SECURITYADMIN temporarily grants ENGINEER_DEV → PROD_DEPLOYER
 2. Fix is applied
 3. Grant is immediately revoked
-4. Incident logged in GUPPI.OPS.INCIDENTS
+4. Incident logged in the wheel as an `INCIDENT` artifact (via `CREATE_ARTIFACT`)
 5. Post-mortem documents why normal path wasn't viable
 6. Preventive story created to avoid recurrence
 

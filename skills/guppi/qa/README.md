@@ -1,3 +1,5 @@
+> **LEGACY (v3.31.0):** design notes for the retired `GUPPI` database (now `DONOTUSEGUPPI`). Concepts still apply; the SQL below does not. Live system: `GUPPIWHEEL.PUBLIC.ARTIFACTS` via the `wheel` skill.
+
 # GUPPI QA — Test Suites, Runs, Model Cards
 
 ## Status: PLACEHOLDER
