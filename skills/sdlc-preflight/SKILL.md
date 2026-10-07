@@ -103,6 +103,12 @@ Scan all staged/modified files for potential secrets.
 **Pass criteria:** No secrets detected in staged files. `.gitignore` exists.
 **Fail criteria:** Potential secret found. Report file + line number (but NOT the secret value).
 
+**Customer names (repos that ship `hooks/no-customer-names.sh`, e.g. guppi-platform):** do NOT scan for names here — call the one guard, so there is a single implementation and a single list (`GUPPIWHEEL.PUBLIC.CUSTOMER_TERMS_V`: manual terms + wheel customer accounts − exclusions).
+1. `git config core.hooksPath` must equal `.githooks` (else commit/push are unguarded) — fix: `git config core.hooksPath .githooks && git config guppi.connection <conn>`
+2. `hooks/no-customer-names.sh --range origin/main..HEAD` must exit 0 (scans every unpushed commit's added lines + message; fails closed if the list is unreachable)
+
+**Fail criteria:** hooksPath unset, or the guard reports a name. Report its output verbatim; never paste the term list itself.
+
 ### Check 5: CHANGELOG
 
 **Load** `references/changelog-template.md` for the required format.

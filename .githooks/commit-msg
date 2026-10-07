@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Versioned git hook -> the single customer-name guard. Enable once per clone:
+#   git config core.hooksPath .githooks && git config guppi.connection <conn>
+exec "$(git rev-parse --show-toplevel)/hooks/no-customer-names.sh" "$@"

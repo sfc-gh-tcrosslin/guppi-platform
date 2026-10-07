@@ -91,11 +91,18 @@ HANDLER = 'run'
 EXECUTE AS OWNER  -- RULE-028: procedure-mediated write; runs as owner so contributors need no direct ARTIFACTS DML
 AS
 $$
-import json
+import json, re
 
 # Warn-hard threshold for near-duplicate INITIATIVEs (calibrated: true dup INIT-80/81 = 0.93;
 # related-but-distinct <= 0.53). >= this against an existing live INITIATIVE => HOLD unless P_FORCE.
 DUP_SIMILARITY_THRESHOLD = 0.80
+
+# Explicit-reference HARD BLOCK pattern (no P_FORCE bypass -- RULE-031 hard-block clause).
+# Root incident: INIT-145's own INSTRUCTIONS literally said "under initiative INIT-119", but the
+# semantic-similarity gate below scored only 0.469 (topic framing differed) so it never fired.
+# An unambiguous textual reference to a live artifact is a stronger, deterministic signal than
+# similarity and needs no override path -- it isn't a maybe, the submitter's own words named the target.
+REF_PATTERN = re.compile(r'\b(?:INIT-\d+|RES-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*|E-\d+)\b')
 
 def _search(session, svc, qtext, cols, limit):
     # Advisory prior-art lookup. Fails SAFE: never let a search hiccup block a submission.
@@ -106,6 +113,49 @@ def _search(session, svc, qtext, cols, limit):
     except Exception:
         return []
 
+def _find_explicit_refs(text):
+    return sorted(set(REF_PATTERN.findall(text or "")))
+
+def _resolve_to_live_initiative(session, ref_ids):
+    # Walk each ref's PARENT_ID chain (up to 10 hops) to find an owning live INITIATIVE.
+    # Fails SAFE: any lookup hiccup returns None (falls through to the normal submit path).
+    if not ref_ids:
+        return None
+    try:
+        rows = session.sql(
+            "SELECT ID, TYPE, PARENT_ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+            "WHERE ID IN (" + ",".join(["?"] * len(ref_ids)) + ") AND SUPERSEDED_BY IS NULL",
+            params=ref_ids
+        ).collect()
+    except Exception:
+        return None
+    by_id = {r["ID"]: {"type": r["TYPE"], "parent": r["PARENT_ID"]} for r in rows}
+    for start_id in ref_ids:
+        cur = by_id.get(start_id)
+        if not cur:
+            continue
+        node_id, seen, hops = start_id, set(), 0
+        while cur and hops < 10:
+            if cur["type"] == "INITIATIVE":
+                return node_id
+            parent_id = cur["parent"]
+            if not parent_id or parent_id == "None" or parent_id in seen:
+                break
+            seen.add(parent_id)
+            try:
+                prow = session.sql(
+                    "SELECT ID, TYPE, PARENT_ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+                    "WHERE ID = ? AND SUPERSEDED_BY IS NULL", params=[parent_id]
+                ).collect()
+            except Exception:
+                break
+            if not prow:
+                break
+            node_id = parent_id
+            cur = {"type": prow[0]["TYPE"], "parent": prow[0]["PARENT_ID"]}
+            hops += 1
+    return None
+
 def run(session, title, hypothesis, instructions, p_force, p_force_reason):
     # RULE-031 No Unilateral Duplicate-Override: forcing past a dup HOLD requires an explicit,
     # non-empty reason (stamped to metadata.dup_override for audit). Empty reason on force = reject.
@@ -113,6 +163,19 @@ def run(session, title, hypothesis, instructions, p_force, p_force_reason):
         return ("ERROR: P_FORCE requires a non-empty P_FORCE_REASON. On a duplicate HOLD the default is "
                 "to add your work under the existing initiative; only a human may force a separate one, "
                 "with a recorded reason (RULE-031).")
+
+    # Explicit-reference HARD BLOCK: runs unconditionally, BEFORE the similarity gate and
+    # regardless of P_FORCE. There is no override path -- see module docstring above.
+    explicit_refs = _find_explicit_refs((hypothesis or "") + " " + (instructions or ""))
+    if explicit_refs:
+        target_init = _resolve_to_live_initiative(session, explicit_refs)
+        if target_init:
+            return ("BLOCKED - not submitted. Your hypothesis/instructions explicitly reference "
+                    + target_init + ", which is a live initiative. This gate has no P_FORCE override "
+                    "(RULE-031 hard block). Add your work under " + target_init + " via "
+                    "create_artifact(P_PARENT_ID='" + target_init + "'), or remove/rephrase the "
+                    "explicit reference if this is genuinely unrelated.")
+
     qtext = (title or "") + ". " + (hypothesis or "")
 
     # Duplicate GATE (warn-hard, overridable). Semantic-similarity check against existing LIVE
@@ -263,6 +326,61 @@ def run(session):
     title = init["TITLE"]
     hypothesis = init["HYPOTHESIS"] or "N/A"
     instructions = init["INSTRUCTIONS"] or ""
+
+    # Explicit-reference safety net (defense-in-depth; primary defense is the hard block in
+    # SUBMIT_INITIATIVE). Guards against any path that inserts an INITIATIVE row directly,
+    # bypassing that gate. If this queued initiative''s own hypothesis/instructions explicitly
+    # reference ANOTHER live INITIATIVE, flag it instead of researching -- do not compound a
+    # duplicate by writing a full RESEARCH artifact under it.
+    ref_pattern = re.compile(r"\\b(?:INIT-\\d+|RES-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*|E-\\d+)\\b")
+    explicit_refs = sorted(set(ref_pattern.findall((hypothesis or "") + " " + (instructions or ""))))
+    target_init = None
+    if explicit_refs:
+        try:
+            rrows = session.sql(
+                "SELECT ID, TYPE, PARENT_ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+                "WHERE ID IN (" + ",".join(["?"] * len(explicit_refs)) + ") AND SUPERSEDED_BY IS NULL",
+                params=explicit_refs
+            ).collect()
+            by_id = {r["ID"]: {"type": r["TYPE"], "parent": r["PARENT_ID"]} for r in rrows}
+            for sid in explicit_refs:
+                if sid == init_id:
+                    continue
+                cur = by_id.get(sid)
+                node_id, seen, hops = sid, set(), 0
+                while cur and hops < 10:
+                    if cur["type"] == "INITIATIVE" and node_id != init_id:
+                        target_init = node_id
+                        break
+                    pid = cur["parent"]
+                    if not pid or pid == "None" or pid in seen:
+                        break
+                    seen.add(pid)
+                    prow = session.sql(
+                        "SELECT ID, TYPE, PARENT_ID FROM GUPPIWHEEL.PUBLIC.ARTIFACTS "
+                        "WHERE ID = ? AND SUPERSEDED_BY IS NULL", params=[pid]
+                    ).collect()
+                    if not prow:
+                        break
+                    node_id = pid
+                    cur = {"type": prow[0]["TYPE"], "parent": prow[0]["PARENT_ID"]}
+                    hops += 1
+                if target_init:
+                    break
+        except Exception:
+            target_init = None
+    if target_init:
+        session.sql(
+            "UPDATE GUPPIWHEEL.PUBLIC.ARTIFACTS SET STAGE = ''Research'', UPDATED_AT = CURRENT_TIMESTAMP() WHERE ID = ?",
+            params=[init_id]
+        ).collect()
+        flag_content = json.dumps({"synthesis": "DUPLICATE-LIKELY: this initiative explicitly references " + target_init + " in its own hypothesis or instructions. Skipping auto-research to avoid compounding a duplicate. A human should reconcile via MERGE_ARTIFACTS or confirm this is genuinely distinct.", "method": "flagged-duplicate", "executor": "rocky-cortex-agent-v4"})
+        session.sql(
+            "CALL GUPPIWHEEL.PUBLIC.CREATE_ARTIFACT(?, ?, NULL, ?, ?, ''Built'', NULL, NULL, ?)",
+            params=["RESEARCH", "Rocky FLAG: possible duplicate of " + target_init + " -- " + title[:150], flag_content, init_id, json.dumps({"flagged": True, "target_init": target_init})]
+        ).collect()
+        return "FLAGGED (possible duplicate of " + target_init + "): " + init_id + " | " + title
+
     priority = (init["PRIORITY"] or "").lower()
     swarm = bool(init["SWARM"]) or (priority == "high")
     prior_art = init["PRIOR_ART"]
@@ -2404,6 +2522,23 @@ def run(session, p_initiative, p_epic, p_dry_run):
     er=session.sql("SELECT TO_VARCHAR(content) FROM GUPPIWHEEL.PUBLIC.ARTIFACTS WHERE id=?", params=[p_epic]).collect()
     if not er: return {"ok":False,"error":"epic_not_found","epic":p_epic}
     cur_content = json.loads(er[0][0]) if er[0][0] else {}
+    # GUARD: assess before overwriting. Do NOT blindly replace a target_spec that already exists
+    # unless WE (BUILD_SUBSTRATE) created it. Protects hand-built / registered targets from being
+    # clobbered when Bob is only grounding. Fresh onboarding (no target_spec yet) proceeds normally.
+    ts_exist = cur_content.get("target_spec")
+    if isinstance(ts_exist, dict) and ts_exist and ts_exist.get("generated_by") != "BUILD_SUBSTRATE":
+        _tg = ts_exist.get("target")
+        _reg = False
+        if _tg:
+            try:
+                _pr = session.sql("SELECT 1 FROM GUPPI_RSI_ENGINE.CORE.RSI_TARGET_PROFILE WHERE TARGET=?", params=[_tg]).collect()
+                _reg = bool(_pr)
+            except Exception:
+                _reg = False
+        return {"ok": True, "status": "skip_present", "epic": p_epic,
+                "existing_target": _tg, "generated_by": ts_exist.get("generated_by"), "registered_target": _reg,
+                "reason": "target_spec already populated and not built by BUILD_SUBSTRATE -- assessed, left intact (guarded against blind overwrite)",
+                "hint": "clear content.target_spec to intentionally rebuild, or improve the existing target via its own RSI loop"}
     # ground on the EPIC''s declared source_research (the target''s real subject), NOT newest-under-initiative
     # (an initiative can carry unrelated research -- e.g. fireside prep on INIT-121 -- so newest would mis-ground)
     srcid = cur_content.get("source_research")
@@ -2516,3 +2651,5 @@ GRANT USAGE ON PROCEDURE GUPPIWHEEL.PUBLIC.BUILD_SUBSTRATE(VARCHAR, VARCHAR, BOO
 -- 13.1 asserts plugin.json == this literal == live PLUGIN_VERSION). Regression-
 -- proof via the guard above; equal re-stamp is idempotent.
 CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.28.0', 'ADD REPARENT_ARTIFACT(P_ARTIFACT_ID, P_NEW_PARENT_ID) — owner-scoped self-serve re-parenting (mirrors UPDATE_OWN_ARTIFACT''s owner gate; granted to GUPPIWHEEL_CONTRIBUTOR, which GUPPI_BUILDER inherits). Sets ARTIFACTS.PARENT_ID in place and deliberately does NOT recompute ROW_HASH: PARENT_ID is in the birth-hash bundle, but per the attestation model an in-place edit that leaves PREV_HASH/ROW_HASH intact is a governed edit (like MERGE_ARTIFACTS re-parenting) — structural chain stays intact, row lists in VERIFY_CHAIN.modified_since_birth (informational). Guards: LIVE + single-row artifact, LIVE parent, no-op refusal, CONNECT BY cycle/self guard (new parent may not be the artifact or a descendant), NULL/'''' unlinks. Used to link INIT-93/94/95 under INIT-89.', FALSE);
+
+CALL GUPPIWHEEL.PUBLIC.PUBLISH_PLUGIN_VERSION('3.29.0', 'FIX chronic duplicate-initiative bug (RULE-031 hard block). SUBMIT_INITIATIVE''s dedup gate only compared TITLE+HYPOTHESIS via AI_SIMILARITY, missing explicit textual references to a live INIT-N/RES-N sitting in the submitter''s own INSTRUCTIONS/HYPOTHESIS (root incident: INIT-145 explicitly said "under initiative INIT-119" but scored only 0.469 similarity, well under the 0.80 threshold). Added a new EXPLICIT-REFERENCE HARD BLOCK to SUBMIT_INITIATIVE: regex-scans HYPOTHESIS+INSTRUCTIONS for INIT-\d+/RES-[\w-]+/E-\d+ patterns, resolves matches to their owning live INITIATIVE via PARENT_ID chain walk, and returns BLOCKED with NO P_FORCE override if found (unlike the existing overridable similarity HOLD — an explicit self-reference has no legitimate override case). Extended the same check to ROCKY_EXECUTE as a defense-in-depth safety net (flags rather than auto-researches if a queued initiative bypasses SUBMIT_INITIATIVE and self-references another live INIT). Reinforced GUPPIWHEEL_COWORK_AGENT orchestration instructions with an explicit pre-flight checkpoint. Updated RULE-031 to document both gates distinctly. Reconciled INIT-145 into INIT-119 via MERGE_ARTIFACTS. See PLAT-42/43.', FALSE);

@@ -35,6 +35,21 @@ snowsql -f seeds/rsi/03_procs.sql       # 16 domain/metric-agnostic engine procs
 snowsql -f seeds/rsi/05_workflows.sql   # RSI_LOOP + RSI_ONBOARD workflows (uploads entrypoints, then CREATE WORKFLOW)
 ```
 
+```bash
+# --- LOOP KERNEL + DEMO FORGE (optional-but-core): the neutral bounded/durable/resumable
+#     step-loop runtime (GUPPI_LOOP_ENGINE.CORE) + the Demo Forge ReAct build-runner.
+#     RSI = Reflection config, Forge = ReAct config over ONE runtime (not two RSIs).
+#     Depends on: RSI_AUTO_POOL (rsi/02_prereqs), GUPPIWHEEL + RUN_TARGET_LIFECYCLE (engine).
+#     Run from the plugin root (04 PUT path is repo-root-relative). Idempotent. ---
+snowsql -f seeds/loop/01_schema.sql     # LOOP_ENGINE + FORGE_BUILDER roles, GUPPI_LOOP_ENGINE + DEMO_FORGE_SANDBOX, kernel tables
+snowsql -f seeds/loop/02_procs.sql      # 8 kernel primitives (begin/record/recall/budget/stall/status/gate)
+snowsql -f seeds/loop/03_forge_exec.sql # DEMO_FORGE_SANDBOX.CONTROL + FORGE_EXEC (sandbox cage)
+snowsql -f seeds/loop/04_forge_workflow.sql  # register forge config + upload entrypoint + CREATE WORKFLOW DEMO_FORGE
+snowsql -f seeds/loop/05_forge_launch.sql    # FORGE_LAUNCH (Bob-proposes) + FORGE_APPROVE (human-GOes) + per-run audit
+snowsql -f seeds/loop/06_forge_widgets.sql   # forge build-plan step-contract WIDGET
+snowsql -f seeds/loop/07_forge_reaper.sql    # (ACCOUNTADMIN grants EXECUTE TASK) TTL sandbox reaper + task
+```
+
 These are idempotent (CREATE IF NOT EXISTS, MERGE). Safe to re-run on an existing account to pick up new rules.
 
 **After seeding, verify the lockdown.** The seed ships born-locked (contributors write only through procedures; doctrine RULES is admin-only). Invoke the `guppiwheel-governance` skill to AUDIT the install and confirm — or to remediate an older account that pre-dates the born-locked seed.

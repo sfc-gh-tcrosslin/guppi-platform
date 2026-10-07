@@ -2,6 +2,35 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.30.0] — 2026-09-30
+
+### Changed — customer-name guard: one list, one script, can't-forget install
+
+- **One list.** New `GUPPIWHEEL.PUBLIC.CUSTOMER_TERMS_V` = manual terms (`CUSTOMER_SUBJECT_TERMS`, `ACTIVE`) + every customer account the wheel already records (`ARTIFACTS.METADATA:account`) − exclusions (`ACTIVE = FALSE` rows). A customer is protected as soon as their work carries an account; nobody has to remember to register them. `PRODUCT_SHARE_LEAK_V` and the git guard now read the same view (previously each read the hand-maintained table only). Derived terms under 4 chars are dropped so a stray short value can't block every commit.
+- **One script, three moments.** `hooks/no-customer-names.sh` now also runs at `pre-push` and via `--range <revs>`, scanning **every commit's added lines and message** — history ships, not the net diff, so a name added then removed is still caught, as is a commit made with the bypass or while the guard failed open.
+- **Fail posture.** Still fails closed on a match everywhere. On an internal error it stays fail-open at commit time but is now fail-**closed** at push time (last gate before the public remote). Term cache refresh tightened from 7 days to 1.
+- **Pinned connection.** The guard resolves `GUPPI_WHEEL_CONNECTION` > `git config guppi.connection` > `SNOWFLAKE_CONNECTION_NAME` > default. Previously it used only the default connection, which may point at an account with no wheel — the cache then silently never refreshed.
+- **Install once per clone, nothing to copy:** versioned `.githooks/` wrappers → `git config core.hooksPath .githooks && git config guppi.connection <conn>`. Edits to the guard take effect immediately (no stale copies in `.git/hooks`).
+- **`sdlc-preflight` is now a caller, not a second implementation:** Check 4 verifies `core.hooksPath` is set and runs the guard with `--range origin/main..HEAD`.
+- Block message now explains excluding a public name via an `ACTIVE = FALSE` row (deleting a manual row is no longer sufficient once names are also wheel-derived).
+
+### Added — neutral loop kernel + Demo Forge (PLAT-59)
+
+- `seeds/loop/` — `GUPPI_LOOP_ENGINE.CORE`: bounded, durable, resumable step-loop runtime (run ledger, step journal with idempotency/replay, budget/circuit-breaker, no-progress detection, durable gate). RSI = Reflection config, Demo Forge = ReAct config over one runtime.
+- Demo Forge: `FORGE_BUILDER` (writes only in `DEMO_FORGE_SANDBOX`), `FORGE_EXEC` sandbox guard, `DEMO_FORGE` workflow, `FORGE_LAUNCH` (Bob proposes) / `FORGE_APPROVE` (human GOes), per-run AUDIT artifact, TTL reaper, build-plan step-contract WIDGET. Bootstrap order added to `guppiwheel-bootstrap`.
+
+## [3.29.0] — 2026-09-25
+
+### Fixed — chronic duplicate-initiative bug (RULE-031 hard block)
+
+- `SUBMIT_INITIATIVE`'s dedup gate only compared `TITLE`+`HYPOTHESIS` via `AI_SIMILARITY`, missing explicit textual references to a live `INIT-N`/`RES-N` sitting in the submitter's own `INSTRUCTIONS`/`HYPOTHESIS`. Root incident: `INIT-145`'s own instructions literally said "under initiative INIT-119", but scored only **0.469** similarity — well under the 0.80 threshold — so the existing overridable HOLD never fired.
+- Added a new **EXPLICIT-REFERENCE HARD BLOCK** to `SUBMIT_INITIATIVE`: regex-scans `HYPOTHESIS`+`INSTRUCTIONS` for `INIT-\d+`/`RES-[\w-]+`/`E-\d+` patterns, resolves matches to their owning live `INITIATIVE` via a `PARENT_ID` chain walk (handles refs like `RES-119-ROCKY` resolving up to `INIT-119`), and returns `BLOCKED` with **no `P_FORCE` override** — unlike the existing semantic-similarity HOLD, an explicit self-reference is a deterministic signal with no legitimate override case.
+- Extended the same explicit-reference check to `ROCKY_EXECUTE` as a defense-in-depth safety net: if a queued initiative bypasses `SUBMIT_INITIATIVE` (e.g. a future direct-insert path) and its own hypothesis/instructions self-reference another live initiative, Rocky flags it (writes a lightweight `RESEARCH` flag artifact, advances stage so it leaves the poll queue) instead of compounding the duplicate with a full research write.
+- Reinforced `GUPPIWHEEL_COWORK_AGENT` orchestration instructions with an explicit pre-flight checkpoint: if the user names an existing `INIT-N` to attach work to, the agent must call `create_artifact` with that `P_PARENT_ID`, never `submit_initiative` — regardless of how novel the new topic sounds. Redeployed as a new agent version, preserving the live `claude-sonnet-5` orchestration model.
+- Updated `RULE-031` to document the two distinct dedup gates (overridable similarity HOLD vs. non-overridable explicit-reference BLOCK).
+- Reconciled the live duplicate via `MERGE_ARTIFACTS('INIT-145', 'INIT-119', ...)`: `INIT-145` superseded, `RES-145-ROCKY` re-parented under `INIT-119`.
+- Verified: explicit reference without force → `BLOCKED`; explicit reference with `P_FORCE=TRUE` + reason → still `BLOCKED` (no bypass); genuinely unrelated new topic with no explicit reference → submits normally (no false positives).
+
 ## [3.28.0] — 2026-09-18
 
 ### Added — `REPARENT_ARTIFACT` (owner-scoped self-serve re-parenting)

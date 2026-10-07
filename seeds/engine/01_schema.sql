@@ -539,16 +539,43 @@ CREATE TABLE IF NOT EXISTS GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS (
 )
 COMMENT = 'Customer/prospect name terms used by PRODUCT_SHARE_LEAK_V to detect a customer-subject artifact on the SHARED guppi product boundary (STO-SUBSTRATE-8). Governance-as-data; previously a hardcoded RLIKE literal in the view, which published the customer list the tripwire existed to protect. Seeded EMPTY - each install populates its own terms. PRODUCT_ID nullable (a prospect may have no product yet).';
 
+-- CUSTOMER_TERMS_V — THE one customer-name list. Every consumer reads this, never the table:
+-- the wheel's share-leak tripwire (PRODUCT_SHARE_LEAK_V) and the git guard
+-- (hooks/no-customer-names.sh at commit + push, and sdlc-preflight).
+--   = manual terms (CUSTOMER_SUBJECT_TERMS, ACTIVE)
+--   + every customer account the wheel already records (ARTIFACTS.METADATA:account)
+--   - exclusions (CUSTOMER_SUBJECT_TERMS rows with ACTIVE = FALSE: public names, noise values)
+-- so a customer is protected as soon as their work carries an account, with nobody having to
+-- remember to add them. Derived terms under 4 chars are dropped so a stray short value can never
+-- block every commit; register a short name manually if it is real.
+CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.CUSTOMER_TERMS_V
+COMMENT = 'The single customer-name list (manual ACTIVE terms + wheel METADATA:account values, minus ACTIVE=FALSE exclusions). Read by PRODUCT_SHARE_LEAK_V and the git customer-name guard. Exclude a public name or noise value with an ACTIVE=FALSE row in CUSTOMER_SUBJECT_TERMS.'
+AS
+WITH manual AS (
+  SELECT TRIM(TERM) AS TERM, ACTIVE FROM GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS
+), derived AS (
+  SELECT DISTINCT TRIM(METADATA:account::string) AS TERM
+  FROM GUPPIWHEEL.PUBLIC.ARTIFACTS
+  WHERE LENGTH(TRIM(METADATA:account::string)) >= 4
+), terms AS (
+  SELECT TERM, 'manual' AS SOURCE FROM manual WHERE ACTIVE
+  UNION ALL
+  SELECT d.TERM, 'wheel_account' FROM derived d
+  WHERE NOT EXISTS (SELECT 1 FROM manual m WHERE NOT m.ACTIVE AND UPPER(m.TERM) = UPPER(d.TERM))
+)
+SELECT ANY_VALUE(TERM) AS TERM, LISTAGG(DISTINCT SOURCE, ',') AS SOURCES
+FROM terms
+GROUP BY UPPER(TERM);
+
 CREATE OR REPLACE VIEW GUPPIWHEEL.PUBLIC.PRODUCT_SHARE_LEAK_V
-COMMENT = 'Share-boundary tripwire (STO-SUBSTRATE-8). Flags (a) an artifact on the SHARED guppi product whose SUBJECT is a customer/prospect, and (b) a guppi artifact still carrying an internal-only key that would ride into the share. Customer terms come from CUSTOMER_SUBJECT_TERMS (governance-as-data). Keys on SUBJECT (title / CONTENT:target), not topical mentions. Must be 0 rows.'
+COMMENT = 'Share-boundary tripwire (STO-SUBSTRATE-8). Flags (a) an artifact on the SHARED guppi product whose SUBJECT is a customer/prospect, and (b) a guppi artifact still carrying an internal-only key that would ride into the share. Customer terms come from CUSTOMER_TERMS_V (the one list, shared with the git guard). Keys on SUBJECT (title / CONTENT:target), not topical mentions. Must be 0 rows.'
 AS
 SELECT a.ID, a.PRODUCT_ID, 'customer-subject in guppi product' AS leak, LEFT(a.TITLE,60) AS detail
 FROM GUPPIWHEEL.PUBLIC.ARTIFACTS a
 WHERE a.PRODUCT_ID = 'guppi'
   AND EXISTS (
-        SELECT 1 FROM GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS t
-        WHERE t.ACTIVE
-          AND UPPER(a.TITLE || ' ' || COALESCE(a.CONTENT:target::string,'')) LIKE '%' || UPPER(t.TERM) || '%'
+        SELECT 1 FROM GUPPIWHEEL.PUBLIC.CUSTOMER_TERMS_V t
+        WHERE UPPER(a.TITLE || ' ' || COALESCE(a.CONTENT:target::string,'')) LIKE '%' || UPPER(t.TERM) || '%'
       )
 UNION ALL
 SELECT a.ID, a.PRODUCT_ID, 'internal key in shared CONTENT', LEFT(a.TITLE,60)
@@ -728,6 +755,8 @@ GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.ARTIFACT_LAUNCHES TO ROLE GUPPIWHEEL_CON
 GRANT INSERT ON TABLE GUPPIWHEEL.PUBLIC.STAGE_TRANSITIONS TO ROLE GUPPIWHEEL_CONTRIBUTOR; -- proc-written stage-change log
 GRANT INSERT, UPDATE ON TABLE GUPPIWHEEL.PUBLIC.PRODUCTS TO ROLE GUPPIWHEEL_CONTRIBUTOR;  -- product registry: contributors curate (reference data, not doctrine)
 GRANT INSERT, UPDATE, DELETE ON TABLE GUPPIWHEEL.PUBLIC.CUSTOMER_SUBJECT_TERMS TO ROLE GUPPIWHEEL_CONTRIBUTOR;  -- share-leak terms: reference data, not doctrine
+GRANT SELECT ON VIEW GUPPIWHEEL.PUBLIC.CUSTOMER_TERMS_V TO ROLE GUPPIWHEEL_CONTRIBUTOR;  -- read by the git customer-name guard
+GRANT SELECT ON VIEW GUPPIWHEEL.PUBLIC.CUSTOMER_TERMS_V TO ROLE GUPPIWHEEL_ADMIN;
 GRANT READ, WRITE ON STAGE GUPPIWHEEL.PUBLIC.ARTIFACT_ASSETS TO ROLE GUPPIWHEEL_CONTRIBUTOR;
 -- NOTE: contributors are intentionally NOT granted direct DML on ID_CONVENTIONS, PLUGIN_VERSION,
 -- INITIATIVE_STEPS (Rocky/agent log, OWNER-written), or GUPPI_TOUCH_WATCH. Sequence/version/log

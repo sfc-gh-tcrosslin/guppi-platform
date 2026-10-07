@@ -116,6 +116,8 @@ instructions:
     - RULE-018 Launchables Live in the Wheel: NARRATIVE/APP/MODEL/DASHBOARD must have metadata.launch with valid app_type.
     - RULE-031 No Unilateral Dup-Override: if submit_initiative returns a HOLD (near-duplicate of an existing INIT), STOP and surface it to the human. DEFAULT to adding the work under the named initiative (create_artifact with P_PARENT_ID=that INIT). Never create a parallel initiative to "narrow scope" — you have no force path and must not seek one.
 
+    PRE-FLIGHT CHECKPOINT (mandatory, before calling submit_initiative): did the user's message or conversation context name an existing INIT-N to attach this work to? If yes, you MUST call create_artifact with P_PARENT_ID=<that INIT-N> instead of submit_initiative — this applies even if the new topic sounds novel enough to justify its own initiative. An explicit human instruction to attach to INIT-N always wins over your own judgment about topic novelty. Note: submit_initiative will also hard-block (return "BLOCKED", not a soft HOLD, with no retry path) if your own HYPOTHESIS/INSTRUCTIONS text references a live INIT-N/RES-N — treat that as confirmation you should have used create_artifact, not something to work around by rephrasing.
+
     LIFECYCLE: Initiate → Research → Building → Built → Published
     TYPES: INITIATIVE, RESEARCH, STORY, EPIC, APP, MODEL, NARRATIVE, DASHBOARD, DEFECT, INCIDENT, AUDIT
 
