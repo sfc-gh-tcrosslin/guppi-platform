@@ -2,6 +2,21 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.33.1] — 2026-10-29
+
+### Changed — local search index refreshes once a day, not on every Search open (PLAT-63)
+
+**Why.** A tab you did not keep open for a day does not need indexing, and files only need the
+day's delta. Refreshing tabs on every Search open added work for no benefit.
+
+- `python3 skills/guppi/local_search.py --sync [--force]` runs the incremental sync and prints one JSON
+  line. Schedule it daily (cron, launchd, or a CoCo Desktop automation). Files are already a delta by
+  (mtime, size); deleted files are pruned.
+- Opening Search no longer refreshes tabs. The index builds once on first use; after that it changes on
+  the daily sync, the Re-index button, or Close Tab.
+- Tabs closed since the last sync still show as Open Tab until the next sync; Jump falls back to
+  opening the URL.
+
 ## [3.33.0] — 2026-10-29
 
 ### Added — Guppi viewer Search tab over local content (PLAT-63, PLAT-64, PLAT-65)

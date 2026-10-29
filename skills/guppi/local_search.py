@@ -585,18 +585,15 @@ def _source_where(source):
 def search_index(q="", source="all", limit=100):
     conn = _conn()
     cur = conn.cursor()
-    cur.execute("SELECT key, val FROM meta WHERE key IN ('last_sync_epoch', 'last_tabs_sync_epoch')")
-    meta_map = {r["key"]: float(r["val"]) for r in cur.fetchall() if r["val"]}
-    last_epoch = meta_map.get("last_sync_epoch", 0.0)
-    last_tabs_epoch = meta_map.get("last_tabs_sync_epoch", 0.0)
+    cur.execute("SELECT val FROM meta WHERE key = 'last_sync_epoch'")
+    row = cur.fetchone()
+    last_epoch = float(row["val"]) if row and row["val"] else 0.0
     conn.close()
 
-    # Auto-sync full index if never built; refresh open tabs only on initial tab load (>60s)
-    now = time.time()
+    # Build once if the index has never been built. After that it only changes on the
+    # daily sync (python3 local_search.py --sync), the Re-index button, or Close Tab.
     if last_epoch == 0.0:
         sync_index(force=False)
-    elif not q and (now - last_tabs_epoch) > 60:
-        sync_index(tabs_only=True)
 
     conn = _conn()
     cur = conn.cursor()
@@ -792,3 +789,11 @@ def perform_action(action, payload):
         return {"ok": True, "message": f"Revealed {os.path.basename(target)} in Finder ('coco' CLI not in PATH)"}
 
     return {"ok": False, "error": f"Unknown action: {action}"}
+
+
+if __name__ == "__main__":
+    import sys
+    if "--sync" in sys.argv:
+        print(json.dumps(sync_index(force="--force" in sys.argv)))
+    else:
+        print("usage: python3 local_search.py --sync [--force]")

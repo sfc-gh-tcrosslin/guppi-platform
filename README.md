@@ -1,4 +1,4 @@
-# guppi-platform v3.33.0
+# guppi-platform v3.33.1
 
 **Guppi** — an AI Lifecycle Platform on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel. A second database — the **RSI engine** (Level 9 · Recursion) — improves what the wheel builds, on a gated, domain-agnostic loop. Levels 2–9 of the CoCo Maturity Model.
 
@@ -80,7 +80,9 @@ snow sql -q "SELECT * FROM GUPPIWHEEL.PUBLIC.GUPPI_CONFORMANCE_V ORDER BY check_
 pip install -r skills/guppi/requirements.txt
 SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --serve
 # Open http://localhost:8888  (binds 127.0.0.1 only)
-#   Search tab (press "/"): first use builds the local index (~15s); later syncs are incremental.
+#   Search tab (press "/"): first use builds the local index (~15s). After that it refreshes once a day:
+#   schedule `python3 skills/guppi/local_search.py --sync` (cron, launchd, or a CoCo Desktop automation, ~5s).
+#   The Re-index button and Close Tab also refresh on demand.
 #   Search needs macOS + Google Chrome for tabs/history; Downloads/CoCo search works anywhere.
 #   Optional: GUPPI_SEARCH_DIRS=/a:/b adds folders; GUPPI_LOCAL_INDEX_DB relocates the index.
 ```
