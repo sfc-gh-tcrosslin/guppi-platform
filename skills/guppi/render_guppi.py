@@ -21,6 +21,8 @@ import os
 import json
 import snowflake.connector
 from datetime import datetime
+import local_search
+from urllib.parse import urlparse
 
 OUTPUT_PATH = os.path.expanduser("~/Downloads/GUPPI.html")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -556,6 +558,11 @@ def render_snapshot():
     except Exception as e:
         print(f"  WARNING: outcomes_scorecard failed ({e}). Outcomes tab will be empty in snapshot.")
         oc = {"outcomes": [], "weekly_output": []}
+    try:
+        ls = local_search.search_index(q="", source="all", limit=350)
+    except Exception as e:
+        print(f"  WARNING: local_search failed ({e}). Search tab will be empty in snapshot.")
+        ls = {"query": "", "source": "all", "last_sync": "—", "counts": {}, "results": []}
     with open(os.path.join(BASE_DIR, "templates", "index.html")) as f:
         shell = f.read()
     with open(os.path.join(BASE_DIR, "static", "guppi.css")) as f:
@@ -568,6 +575,7 @@ def render_snapshot():
             .replace('<script src="/static/guppi.js"></script>',
                      "<script>window.__SNAPSHOT__=" + json.dumps(data, default=str)
                      + ";window.__OUTCOMES__=" + json.dumps(oc, default=str)
+                     + ";window.__LOCAL_SEARCH__=" + json.dumps(ls, default=str)
                      + ";</script><script>" + js + "</script>"))
     with open(OUTPUT_PATH, "w") as f:
         f.write(html)
@@ -591,6 +599,35 @@ def _make_app():
     @app.route("/api/outcomes")
     def api_outcomes():
         return jsonify(outcomes_scorecard())
+
+    @app.before_request
+    def _local_only_guard():
+        # /api/local/* exposes browser history and local-file actions: loopback Host + same-origin only.
+        if request.path.startswith("/api/local/"):
+            host = (request.host or "").split(":")[0]
+            if host not in ("localhost", "127.0.0.1"):
+                return jsonify({"error": "local search is loopback-only"}), 403
+            origin = request.headers.get("Origin")
+            if origin and urlparse(origin).hostname not in ("localhost", "127.0.0.1"):
+                return jsonify({"error": "cross-origin request refused"}), 403
+
+    @app.route("/api/local/search")
+    def api_local_search():
+        q = request.args.get("q", "")
+        source = request.args.get("source", "all")
+        limit = int(request.args.get("limit", 100))
+        return jsonify(local_search.search_index(q=q, source=source, limit=limit))
+
+    @app.route("/api/local/reindex", methods=["POST"])
+    def api_local_reindex():
+        return jsonify(local_search.sync_index(force=True))
+
+    @app.route("/api/local/action", methods=["POST"])
+    def api_local_action():
+        payload = request.get_json(force=True, silent=True) or {}
+        action = payload.get("action", "")
+        res = local_search.perform_action(action, payload)
+        return jsonify(res), (200 if res.get("ok") else 400)
 
     @app.route("/api/artifact/<artifact_id>")
     def api_artifact(artifact_id):
@@ -631,7 +668,7 @@ if __name__ == "__main__":
         port = 8888
         print(f"GUPPI Viewer — Serving on http://localhost:{port}")
         print("  Command Center / Classic (SDLC) / AILC. Add + drill via the gated procs.")
-        app.run(host="0.0.0.0", port=port, debug=False)
+        app.run(host="127.0.0.1", port=port, debug=False)
     else:
         print("GUPPI Viewer — Rendering read-only snapshot...")
         path = render_snapshot()

@@ -2,6 +2,31 @@
 
 All notable changes to guppi-platform are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [3.33.0] — 2026-10-29
+
+### Added — Guppi viewer Search tab over local content (PLAT-63, PLAT-64, PLAT-65)
+
+**Why.** Hundreds of open and historical Chrome tabs plus large Downloads and CoCo folders meant
+hunting for the deck or doc you already made. One local index replaces the tab pile.
+
+- **`skills/guppi/local_search.py`** — SQLite FTS5 index at `~/.snowflake/cortex/guppi_local_index.db`
+  (stdlib only, outside git). Sources: open Chrome tabs (osascript), Chrome History + Bookmarks across
+  profiles (lock-safe temp copy), `~/Downloads`, `~/.snowflake/cortex`
+  skills/plugins/workspace. HTML decks indexed by title, headings and body. Incremental by
+  (mtime, size). A transient osascript failure keeps cached tabs.
+- **Search tab** (`/` to jump) with source pills + counts, Re-index, per-source actions (Jump to / Close
+  Tab, Open URL, Open, Open in CoCo, Finder) and Wheel artifacts merged in client-side.
+- **API:** `GET /api/local/search`, `POST /api/local/reindex`, `POST /api/local/action`.
+  `--render` embeds `window.__LOCAL_SEARCH__` so the static snapshot filters offline.
+
+### Security
+- Viewer now binds **127.0.0.1** (was `0.0.0.0`). `/api/local/*` requires a loopback Host and
+  same-origin requests, and actions apply only to indexed items.
+
+### Notes
+- Titles, URLs and extracted text only; history page bodies and PDF/Office text are not indexed.
+- Tabs and history need macOS + Google Chrome. No schema change: no upgrade script.
+
 ## [3.32.0] — 2026-10-07
 
 ### Changed — IDs are derived from data; ID_CONVENTIONS counters retired (PLAT-61)

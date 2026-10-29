@@ -26,6 +26,7 @@
   <button class="global-tab" data-view="ailc">AILC</button>
   <button class="global-tab" data-view="outcomes">Outcomes</button>
   <button class="global-tab" data-view="wheel">The Wheel</button>
+  <button class="global-tab" data-view="search">Search <span class="tab-kbd">/</span></button>
 </div>
 
 <!-- COMMAND CENTER -->
@@ -63,6 +64,30 @@
 <section id="view-wheel" class="view">
   <div class="section-note">Guppi's two core principles on one page: the <b>GuppiWheel</b> (the engine — how work turns) and the <b>CoCo Maturity Model</b> (how far the practice has climbed). They meet at Level 9, Recursion.</div>
   <div id="wheel-body"></div>
+</section>
+
+<!-- LOCAL + WHEEL SEARCH -->
+<section id="view-search" class="view">
+  <div class="section-note">Unified local SQLite FTS5 cache across <b>open Chrome tabs</b>, <b>Chrome history &amp; bookmarks</b>, <b>~/Downloads</b> (HTML decks, PDFs, project folders), <b>~/.snowflake/cortex</b> (skills, plugins, workspace), and <b>GuppiWheel artifacts</b>. Press <code>/</code> anywhere to jump here.</div>
+  <div class="ls-toolbar">
+    <div class="ls-input-wrap">
+      <input id="ls-query" type="search" placeholder="Search open Chrome tabs, browser history, Downloads decks, CoCo skills &amp; files, Wheel artifacts…" autocomplete="off">
+      <button class="ls-clear" id="ls-clear" title="Clear search">&times;</button>
+    </div>
+    <button class="btn" id="ls-reindex" title="Re-scan Chrome tabs, history, Downloads, and CoCo folders">&#8635; Re-index</button>
+  </div>
+  <div class="ls-bar">
+    <div class="subtabs" id="ls-sources">
+      <button class="tab active" data-src="all">All <span class="ls-cnt" id="cnt-all"></span></button>
+      <button class="tab" data-src="chrome_tab">Open Tabs <span class="ls-cnt" id="cnt-chrome_tab"></span></button>
+      <button class="tab" data-src="chrome_history">History &amp; Bookmarks <span class="ls-cnt" id="cnt-chrome_history"></span></button>
+      <button class="tab" data-src="downloads">Downloads &amp; Decks <span class="ls-cnt" id="cnt-downloads"></span></button>
+      <button class="tab" data-src="coco">CoCo &amp; Workspace <span class="ls-cnt" id="cnt-coco"></span></button>
+      <button class="tab" data-src="wheel">Wheel <span class="ls-cnt" id="cnt-wheel"></span></button>
+    </div>
+    <div class="ls-meta" id="ls-meta">Index: —</div>
+  </div>
+  <div id="ls-results" class="ls-results"></div>
 </section>
 
 <!-- DETAIL DRAWER -->

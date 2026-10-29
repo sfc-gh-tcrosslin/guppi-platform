@@ -28,6 +28,10 @@
     $("#cur-user").textContent = DATA.current_user || "—";
     populateProducts();
     renderKPIs(); renderCommandProducts(); renderClassic("stories"); renderAILC();
+    updateSearchCounts(LS_STATE.counts);
+    if ($("#view-search") && $("#view-search").classList.contains("active") && (LS_STATE.q || LS_STATE.source === "wheel")) {
+      runLocalSearch();
+    }
   }
   function populateProducts() {
     var sel = $("#f-product"); if (!sel) return;
@@ -222,7 +226,8 @@
     h.push('<span class="k">Created</span><span>' + esc(a.created || "—") + "</span>");
     h.push('<span class="k">Updated</span><span>' + esc(a.updated || "—") + "</span>");
     if (a.product_id) h.push('<span class="k">Product</span><span>' + esc(a.product_id) + "</span>");
-    if (a.tags && a.tags.length) h.push('<span class="k">Tags</span><span>' + esc((a.tags || []).join(", ")) + "</span>");
+    var dTags = tagsToStr(a.tags);
+    if (dTags) h.push('<span class="k">Tags</span><span>' + esc(dTags) + "</span>");
     if (a.superseded_by) h.push('<span class="k">Superseded by</span><span>' + esc(a.superseded_by) + "</span>");
     h.push("</div>");
     // content
@@ -576,6 +581,220 @@
     _wc.raf = requestAnimationFrame(_wcDraw);
   }
 
+  /* ---------- Unified Local + Wheel Search ---------- */
+  var LS_STATE = { source: "all", q: "", timer: null, loaded: false, snapshotItems: null, counts: {}, lastSync: "—" };
+  var SRC_LABELS = {
+    chrome_tab: "OPEN TAB",
+    chrome_history: "CHROME",
+    downloads: "DOWNLOADS",
+    coco: "COCO",
+    wheel: "WHEEL"
+  };
+  function fmtBytes(b) {
+    if (!b || b <= 0) return "";
+    if (b < 1024) return b + " B";
+    if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+    return (b / 1048576).toFixed(1) + " MB";
+  }
+  function safeSnippet(s) {
+    if (!s) return "";
+    // Escape everything except <mark> and </mark> emitted by SQLite FTS5 snippet()
+    return esc(s).replace(/&lt;mark&gt;/g, "<mark>").replace(/&lt;\/mark&gt;/g, "</mark>");
+  }
+  function tagsToStr(t) {
+    if (!t) return "";
+    if (Array.isArray(t)) return t.join(", ");
+    if (typeof t === "string") {
+      try { var p = JSON.parse(t); if (Array.isArray(p)) return p.join(", "); } catch (e) {}
+      return t;
+    }
+    return String(t);
+  }
+  function searchWheelArtifacts(q, limit) {
+    var all = (DATA && DATA.flywheel) ? DATA.flywheel : [];
+    var ql = (q || "").trim().toLowerCase();
+    var terms = ql ? ql.split(/\s+/).filter(Boolean) : [];
+    var matched = all.filter(function (a) {
+      if (!terms.length) return true;
+      var tStr = tagsToStr(a.tags);
+      var hay = ((a.id || "") + " " + (a.type || "") + " " + (a.title || "") + " " + (a.product_id || "") + " " + (a.owner || "") + " " + tStr).toLowerCase();
+      return terms.every(function (t) { return hay.indexOf(t) >= 0; });
+    });
+    return matched.slice(0, limit || 40).map(function (a) {
+      var tStr = tagsToStr(a.tags);
+      return {
+        id: a.id,
+        source: "wheel",
+        kind: (a.type || "ARTIFACT").toLowerCase(),
+        title: a.id + " — " + (a.title || ""),
+        uri_or_path: a.id,
+        subtitle: (a.type || "") + " · stage " + (a.stage || "—") + (a.product_id ? " · " + a.product_id : ""),
+        mtime_str: a.updated || a.created || "",
+        size_bytes: 0,
+        snippet: tStr ? ("Tags: " + tStr) : "",
+        extra: { artifact_id: a.id, artifact_type: a.type }
+      };
+    });
+  }
+  function updateSearchCounts(counts) {
+    var wheelTotal = (DATA && DATA.flywheel) ? DATA.flywheel.length : 0;
+    var c = counts || {};
+    var totalAll = (c.all || 0) + wheelTotal;
+    function setC(id, v) { var n = $("#cnt-" + id); if (n) n.textContent = v != null ? "(" + v + ")" : ""; }
+    setC("all", totalAll);
+    setC("chrome_tab", c.chrome_tab || 0);
+    setC("chrome_history", c.chrome_history || 0);
+    setC("downloads", c.downloads || 0);
+    setC("coco", c.coco || 0);
+    setC("wheel", wheelTotal);
+  }
+  function renderSearchItems(items, lastSync) {
+    var meta = $("#ls-meta");
+    if (meta) meta.textContent = "Index synced: " + (lastSync || "—") + (LIVE ? "" : " (snapshot)");
+    var host = $("#ls-results");
+    if (!host) return;
+    if (!items || !items.length) {
+      host.innerHTML = '<div class="empty">No matching items found. Try another keyword or click Re-index.</div>';
+      return;
+    }
+    host.innerHTML = items.map(function (it) {
+      var srcLbl = SRC_LABELS[it.source] || (it.source || "").toUpperCase();
+      var sizeStr = fmtBytes(it.size_bytes);
+      var metaParts = [];
+      if (it.subtitle) metaParts.push(esc(it.subtitle));
+      if (sizeStr) metaParts.push(esc(sizeStr));
+      if (it.mtime_str) metaParts.push(esc(it.mtime_str));
+      var actions = [];
+      if (it.source === "chrome_tab") {
+        actions.push('<button class="ls-btn primary" data-act="focus_tab" data-uri="' + esc(it.uri_or_path) + '">Jump to Tab &#8599;</button>');
+        actions.push('<button class="ls-btn danger" data-act="close_tab" data-uri="' + esc(it.uri_or_path) + '">Close Tab &times;</button>');
+        actions.push('<button class="ls-btn" data-act="copy_uri" data-uri="' + esc(it.uri_or_path) + '">Copy URL</button>');
+      } else if (it.source === "chrome_history") {
+        actions.push('<button class="ls-btn primary" data-act="open_url" data-uri="' + esc(it.uri_or_path) + '">Open URL &#8599;</button>');
+        actions.push('<button class="ls-btn" data-act="copy_uri" data-uri="' + esc(it.uri_or_path) + '">Copy URL</button>');
+      } else if (it.source === "downloads" || it.source === "coco") {
+        actions.push('<button class="ls-btn primary" data-act="open_file" data-uri="' + esc(it.uri_or_path) + '">Open</button>');
+        actions.push('<button class="ls-btn" data-act="open_coco" data-uri="' + esc(it.uri_or_path) + '">Open in CoCo</button>');
+        actions.push('<button class="ls-btn" data-act="reveal_finder" data-uri="' + esc(it.uri_or_path) + '">Finder</button>');
+      } else if (it.source === "wheel") {
+        actions.push('<button class="ls-btn primary" data-act="wheel_detail" data-id="' + esc(it.id) + '">Inspect</button>');
+        if (it.extra && LAUNCHABLE[it.extra.artifact_type]) {
+          actions.push('<button class="ls-btn" data-act="wheel_open" data-id="' + esc(it.id) + '">Launch &#8595;</button>');
+        }
+      }
+      return '<div class="ls-item" data-uri="' + esc(it.uri_or_path) + '">'
+        + '<div class="ls-main">'
+        +   '<div class="ls-head">'
+        +     '<span class="chip src-' + esc(it.source) + '">' + esc(srcLbl) + '</span>'
+        +     (it.kind ? '<span class="chip kind-chip">' + esc(it.kind) + '</span>' : '')
+        +     '<span class="ls-title">' + esc(it.title) + '</span>'
+        +   '</div>'
+        +   '<div class="ls-sub">' + metaParts.join(" &middot; ") + '</div>'
+        +   (it.snippet ? '<div class="ls-snip">' + safeSnippet(it.snippet) + '</div>' : '')
+        + '</div>'
+        + '<div class="ls-actions">' + actions.join("") + '</div>'
+        + '</div>';
+    }).join("");
+  }
+  function runLocalSearch() {
+    var q = ($("#ls-query") ? $("#ls-query").value : "").trim();
+    var src = LS_STATE.source || "all";
+    LS_STATE.q = q;
+    if (src === "wheel") {
+      updateSearchCounts(LS_STATE.counts);
+      renderSearchItems(searchWheelArtifacts(q, 100), LS_STATE.lastSync);
+      return;
+    }
+    if (!LIVE) {
+      var snap = window.__LOCAL_SEARCH__ || { counts: {}, last_sync: "—", results: [] };
+      LS_STATE.counts = snap.counts || {};
+      LS_STATE.lastSync = snap.last_sync || "—";
+      updateSearchCounts(LS_STATE.counts);
+      var terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      var filtered = (snap.results || []).filter(function (it) {
+        if (src !== "all") {
+          if (src === "downloads") {
+            if (it.source !== "downloads" && String(it.uri_or_path || "").indexOf("/Downloads/") < 0) return false;
+          } else if (it.source !== src) return false;
+        }
+        if (!terms.length) return true;
+        var hay = ((it.title || "") + " " + (it.subtitle || "") + " " + (it.uri_or_path || "") + " " + (it.snippet || "")).toLowerCase();
+        return terms.every(function (t) { return hay.indexOf(t) >= 0; });
+      });
+      if (src === "all" && q) {
+        filtered = filtered.concat(searchWheelArtifacts(q, 25));
+      }
+      renderSearchItems(filtered.slice(0, 120), LS_STATE.lastSync);
+      return;
+    }
+    fetch("/api/local/search?q=" + encodeURIComponent(q) + "&source=" + encodeURIComponent(src) + "&limit=100")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        LS_STATE.counts = d.counts || {};
+        LS_STATE.lastSync = d.last_sync || "—";
+        updateSearchCounts(LS_STATE.counts);
+        var items = d.results || [];
+        if (src === "all" && q) {
+          items = items.concat(searchWheelArtifacts(q, 25));
+        }
+        renderSearchItems(items, LS_STATE.lastSync);
+      })
+      .catch(function (e) {
+        var host = $("#ls-results");
+        if (host) host.innerHTML = '<div class="empty">Search failed: ' + esc(e) + '</div>';
+      });
+  }
+  function triggerReindex() {
+    if (!LIVE) { toast("Re-index requires serve mode (python render_guppi.py --serve)."); return; }
+    var btn = $("#ls-reindex");
+    if (btn) { btn.disabled = true; btn.textContent = "Indexing…"; }
+    toast("Scanning Chrome tabs, history, Downloads, and CoCo folders…");
+    fetch("/api/local/reindex", { method: "POST" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (btn) { btn.disabled = false; btn.innerHTML = "&#8635; Re-index"; }
+        toast("Indexed " + ((d.counts && d.counts.all) || 0) + " local items in " + (d.elapsed_ms || 0) + "ms");
+        runLocalSearch();
+      })
+      .catch(function (e) {
+        if (btn) { btn.disabled = false; btn.innerHTML = "&#8635; Re-index"; }
+        toast("Re-index failed: " + e, 6000);
+      });
+  }
+  function handleSearchAction(act, uri, id) {
+    if (act === "wheel_detail" && id) { openDetail(id); return; }
+    if (act === "wheel_open" && id) { openLocal(id); return; }
+    if (act === "open_url" && uri) { window.open(uri, "_blank"); return; }
+    if (act === "copy_uri" && uri) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(uri).then(function () { toast("Copied to clipboard"); });
+      } else { window.prompt("Copy:", uri); }
+      return;
+    }
+    if (!LIVE) {
+      if (uri && uri.indexOf("http") === 0) { window.open(uri, "_blank"); return; }
+      toast("Local file/tab actions require serve mode (python render_guppi.py --serve).");
+      return;
+    }
+    fetch("/api/local/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: act, uri_or_path: uri })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (res.ok) {
+        toast(res.message || "Done");
+        if (act === "close_tab") runLocalSearch();
+      } else {
+        toast("Action failed: " + (res.error || res.message || "unknown"), 5000);
+      }
+    }).catch(function (e) { toast("Action error: " + e, 5000); });
+  }
+  function renderSearch() {
+    var inp = $("#ls-query");
+    if (inp) setTimeout(function () { inp.focus(); }, 30);
+    runLocalSearch();
+  }
+
   /* ---------- refresh + wiring ---------- */
   function refresh() {
     if (!LIVE) return Promise.resolve();
@@ -587,6 +806,7 @@
     Array.prototype.forEach.call(document.querySelectorAll(".view"), function (s) { s.classList.toggle("active", s.id === "view-" + v); });
     if (v === "outcomes") renderOutcomes();
     if (v === "wheel") renderWheel(); else stopWheel();
+    if (v === "search") renderSearch();
   }
 
   function wire() {
@@ -599,6 +819,40 @@
         b.classList.add("active"); renderClassic(b.dataset.sub);
       });
     });
+    // Local search wiring
+    var lsInput = $("#ls-query");
+    if (lsInput) {
+      lsInput.addEventListener("input", function () {
+        clearTimeout(LS_STATE.timer);
+        LS_STATE.timer = setTimeout(runLocalSearch, 140);
+      });
+    }
+    var lsClear = $("#ls-clear");
+    if (lsClear) {
+      lsClear.addEventListener("click", function () {
+        if (lsInput) { lsInput.value = ""; lsInput.focus(); }
+        runLocalSearch();
+      });
+    }
+    var lsReindex = $("#ls-reindex");
+    if (lsReindex) lsReindex.addEventListener("click", triggerReindex);
+    Array.prototype.forEach.call(document.querySelectorAll("#ls-sources .tab"), function (b) {
+      b.addEventListener("click", function () {
+        Array.prototype.forEach.call(document.querySelectorAll("#ls-sources .tab"), function (x) { x.classList.remove("active"); });
+        b.classList.add("active");
+        LS_STATE.source = b.dataset.src || "all";
+        runLocalSearch();
+      });
+    });
+    var lsRes = $("#ls-results");
+    if (lsRes) {
+      lsRes.addEventListener("click", function (ev) {
+        var btn = ev.target.closest("[data-act]");
+        if (!btn) return;
+        ev.stopPropagation();
+        handleSearchAction(btn.dataset.act, btn.dataset.uri || "", btn.dataset.id || "");
+      });
+    }
     // click-through on classic rows/cards -> detail
     $("#classic-body").addEventListener("click", function (ev) {
       var row = ev.target.closest("[data-id]"); if (row && row.dataset.id) openDetail(row.dataset.id);
@@ -612,7 +866,16 @@
     $("#modal-scrim").addEventListener("click", closeModal);
     $("#add-submit").addEventListener("click", submitAdd);
     $("#f-type").addEventListener("change", syncAddFields);
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closeDrawer(); closeModal(); } });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closeDrawer(); closeModal(); }
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        var tag = (document.activeElement && document.activeElement.tagName || "").toLowerCase();
+        if (tag !== "input" && tag !== "textarea" && tag !== "select" && !document.activeElement.isContentEditable) {
+          e.preventDefault();
+          switchView("search");
+        }
+      }
+    });
   }
 
   wire(); load();

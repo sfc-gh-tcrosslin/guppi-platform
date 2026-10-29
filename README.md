@@ -1,4 +1,4 @@
-# guppi-platform v3.32.0
+# guppi-platform v3.33.0
 
 **Guppi** — an AI Lifecycle Platform on Snowflake. One ARTIFACTS table is the source of truth; every initiative, research synthesis, app, model, narrative, defect, incident, audit, and widget lives in the wheel. A second database — the **RSI engine** (Level 9 · Recursion) — improves what the wheel builds, on a gated, domain-agnostic loop. Levels 2–9 of the CoCo Maturity Model.
 
@@ -15,7 +15,7 @@ Includes:
 - **TARS** — independent trust auditor (writes AUDIT artifacts)
 - **The Bond** — the episodic-memory organ of the AILC: an append-only, co-created log of moments (`THE_BOND` database). Empty on install, private by default.
 - **RSI engine** — the Level 9 (Recursion) capability: a gated, domain/metric-agnostic loop (`RSI_LOOP` / `RSI_ONBOARD`) that improves the artifacts the wheel builds. Separate `GUPPI_RSI_ENGINE` database; **delegation-grade today, net-positive gated on held-out proof**. See the `rsi` skill.
-- **GUPPI viewer** — Flask app rendering Command Center + Flywheel from `localhost:8888`
+- **GUPPI viewer** — Flask app rendering Command Center, Flywheel, Outcomes and **Search** from `localhost:8888` (loopback only). Search is one box over open Chrome tabs, Chrome history/bookmarks, `~/Downloads`, your CoCo folders and Wheel artifacts, backed by a local SQLite FTS5 index (`~/.snowflake/cortex/guppi_local_index.db`, never in git).
 
 ## Lifecycle
 
@@ -79,7 +79,10 @@ snow sql -q "SELECT * FROM GUPPIWHEEL.PUBLIC.GUPPI_CONFORMANCE_V ORDER BY check_
 # 5. Install viewer dependencies and launch
 pip install -r skills/guppi/requirements.txt
 SNOWFLAKE_CONNECTION_NAME=YourConnection python3 skills/guppi/render_guppi.py --serve
-# Open http://localhost:8888
+# Open http://localhost:8888  (binds 127.0.0.1 only)
+#   Search tab (press "/"): first use builds the local index (~15s); later syncs are incremental.
+#   Search needs macOS + Google Chrome for tabs/history; Downloads/CoCo search works anywhere.
+#   Optional: GUPPI_SEARCH_DIRS=/a:/b adds folders; GUPPI_LOCAL_INDEX_DB relocates the index.
 ```
 
 A fresh install starts with a clean wheel (no seeded artifacts), so the gate passes immediately. Re-run the gate any time after you build or re-author — it is the definition of done (see `COCO.md`).
